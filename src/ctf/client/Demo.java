@@ -18,6 +18,7 @@ public class Demo implements NetLink {
     final long[] droppedAt = new long[2];
     final Random r = new Random();
     double clock = 300;
+    double tentCooldown;
     boolean lag;
 
     public static void main(String[] a) {
@@ -56,10 +57,27 @@ public class Demo implements NetLink {
             m.x = me[0]; m.y = me[1]; m.aim = aim;
             stepBots(dt);
             stepFlags();
+            stepTent(dt);
             stepBullets(dt);
             clock = Math.max(0, clock - dt); s.timeLeftSec = (int) clock;
             gp.onSnapshot(copy(s));
         }).start();
+    }
+
+    void stepTent(double dt) {
+        tentCooldown = Math.max(0, tentCooldown - dt);
+        s.tentCooldown = tentCooldown;
+        for (Snapshot.P p : s.players) p.shieldSec = Math.max(0, p.shieldSec - dt);
+        for (Snapshot.P p : s.players) {
+            if (p.alive && Math.hypot(p.x - MapData.TENT_X, p.y - MapData.TENT_Y) <= MapData.TENT_R) {
+                if (tentCooldown <= 0 && p.shieldSec <= 0) {
+                    p.shieldSec = MapData.SHIELD_DURATION;
+                    tentCooldown = MapData.TENT_RECHARGE;
+                    s.tentCooldown = tentCooldown;
+                    break;
+                }
+            }
+        }
     }
 
     /** Bots wander (new direction when blocked by a wall) and shoot the first enemy they can see. */
@@ -107,24 +125,32 @@ public class Demo implements NetLink {
 
     void fire(int shooter, double ang) {
         Snapshot.P p = s.players[shooter];
-        bullets.add(new double[]{p.x, p.y, Math.cos(ang) * 420, Math.sin(ang) * 420, shooter});
+        bullets.add(new double[]{p.x, p.y, Math.cos(ang) * MapData.BULLET_SPEED, Math.sin(ang) * MapData.BULLET_SPEED, shooter});
     }
 
     void stepBullets(double dt) {
         long now = System.currentTimeMillis();
         cd[ME] -= dt;
-        if (shoot && cd[ME] <= 0 && s.players[ME].alive) { cd[ME] = 0.25; fire(ME, aim); }
+        if (shoot && cd[ME] <= 0 && s.players[ME].alive) { cd[ME] = MapData.FIRE_INTERVAL; fire(ME, aim); }
+        shoot = false; // a click is consumed per server tick; held fire re-sends true every message
         for (Iterator<double[]> it = bullets.iterator(); it.hasNext(); ) {
             double[] b = it.next();
             Snapshot.P sh = s.players[(int) b[4]];
+            double ox = b[0], oy = b[1];
             b[0] += b[2] * dt; b[1] += b[3] * dt;
             boolean gone = b[0] < 0 || b[0] > MapData.W || b[1] < 0 || b[1] > MapData.H || inWall(b[0], b[1]);
             for (Snapshot.P p : s.players)
-                if (p.team != sh.team && p.alive && Math.hypot(p.x - b[0], p.y - b[1]) < MapData.R) {
-                    p.alive = false; respawnAt[p.id] = now + 3000; sh.tags++; gone = true;
-                    for (int t = 0; t < 2; t++) { // a tagged carrier drops the flag where they fell
-                        Snapshot.F f = s.flags[t];
-                        if (f.state == Snapshot.CARRIED && f.carrier == p.id) { f.state = Snapshot.DROPPED; f.carrier = -1; f.x = p.x; f.y = p.y; droppedAt[t] = now; }
+                if (p.team != sh.team && p.alive && MapData.segHits(ox, oy, b[0], b[1], p.x, p.y, MapData.R)) {
+                    if (p.shieldSec > 0) {
+                        gone = true; // absorbed / deflected by protective sanctuary shield!
+                        break;
+                    } else {
+                        p.alive = false; respawnAt[p.id] = now + 3000; sh.tags++; gone = true;
+                        for (int t = 0; t < 2; t++) { // a tagged carrier drops the flag where they fell
+                            Snapshot.F f = s.flags[t];
+                            if (f.state == Snapshot.CARRIED && f.carrier == p.id) { f.state = Snapshot.DROPPED; f.carrier = -1; f.x = p.x; f.y = p.y; droppedAt[t] = now; }
+                        }
+                        break;
                     }
                 }
             if (gone) it.remove();
@@ -153,6 +179,7 @@ public class Demo implements NetLink {
         for (int i = 0; i < c.players.length; i++) {
             Snapshot.P a = o.players[i], p = new Snapshot.P();
             p.aim = a.aim; p.id = a.id; p.name = a.name; p.team = a.team; p.x = a.x; p.y = a.y; p.alive = a.alive;
+            p.shieldSec = a.shieldSec;
             p.captures = a.captures; p.tags = a.tags; p.pingMs = a.pingMs;
             c.players[i] = p;
         }
@@ -162,12 +189,22 @@ public class Demo implements NetLink {
         }
         c.bullets = o.bullets.clone();
         c.score = o.score.clone(); c.timeLeftSec = o.timeLeftSec; c.winner = o.winner;
+        c.tentCooldown = o.tentCooldown;
         return c;
     }
 
-    @Override public void sendInput(int dx, int dy, double aim, boolean shoot) { this.dx = dx; this.dy = dy; this.aim = aim; this.shoot = shoot; }
+    @Override public void sendInput(int dx, int dy, double aim, boolean shoot) { this.dx = dx; this.dy = dy; this.aim = aim; this.shoot |= shoot; }
     @Override public int pingMs() { return lag ? 180 : 20; }
-    @Override public void requestPlayAgain() { s.score = new int[2]; s.winner = -1; }
+    @Override public void requestPlayAgain() {
+        s.score = new int[2];
+        s.winner = -1;
+        clock = 300;
+        s.timeLeftSec = 300;
+        s.tentCooldown = tentCooldown = 0;
+        for (Snapshot.P p : s.players) p.shieldSec = 0;
+        returnFlag(0);
+        returnFlag(1);
+    }
     @Override public void toggleLagSim() { lag = !lag; }
     @Override public boolean lagSimOn() { return lag; }
 }

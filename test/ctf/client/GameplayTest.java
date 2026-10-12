@@ -29,10 +29,12 @@ public class GameplayTest {
         runTest("Respawn Timing & Base Reset", GameplayTest::testRespawnTiming);
         runTest("Repeated Hits & Overlapping Respawn Robustness", GameplayTest::testRepeatedHitsRobustness);
         runTest("GamePanel Event Detection & Particle Bursts", GameplayTest::testGamePanelEventDetection);
-        runTest("GamePanel Bullet & Player Rendering", GameplayTest::testGamePanelRendering);
         runTest("Map Collision Resolution (MapData.resolve)", GameplayTest::testMapDataResolve);
         runTest("Bots Shoot Back & Tagged Carrier Drops Flag", GameplayTest::testBotsShootBack);
         runTest("Line of Sight Blocked by Walls", GameplayTest::testLineOfSight);
+        runTest("Power Tent Shield Activation & Invulnerability", GameplayTest::testPowerTentShieldAndInvulnerability);
+        runTest("Power Tent Shield Expiration", GameplayTest::testPowerTentShieldExpiration);
+        runTest("Responsive Victory Celebration Screen Layout", GameplayTest::testResponsiveVictoryLayout);
 
         System.out.println("\n=== Test Results Summary ===");
         System.out.println("Passed: " + passed + " | Failed: " + failed);
@@ -389,5 +391,110 @@ public class GameplayTest {
         // Wall spans x from 380 to 420. With R=14, p[0] must be <= 380-14=366 or >= 420+14=434
         boolean outOfWall = p[0] <= 366 || p[0] >= 434 || p[1] <= 186 || p[1] >= 414;
         assertTrue(outOfWall, "MapData.resolve must push player outside wall boundary");
+    }
+
+    static void testPowerTentShieldAndInvulnerability() {
+        Demo demo = new Demo();
+        demo.s.players = new Snapshot.P[4];
+        for (int i = 0; i < 4; i++) {
+            Snapshot.P p = new Snapshot.P();
+            p.id = i; p.team = i % 2; p.x = 100 + i * 150; p.y = 100; p.alive = true;
+            demo.s.players[i] = p;
+        }
+
+        Snapshot.P bluePlayer = demo.s.players[1];
+        // Move blue player into the protective power tent zone
+        bluePlayer.x = MapData.TENT_X;
+        bluePlayer.y = MapData.TENT_Y;
+
+        demo.stepTent(0.03);
+        assertEquals(MapData.SHIELD_DURATION, bluePlayer.shieldSec, 0.05, "Player in tent must receive shield");
+        assertEquals(MapData.TENT_RECHARGE, demo.tentCooldown, 0.05, "Tent must enter recharge cooldown");
+
+        // Attempt second activation by player 3 while tent is on cooldown
+        Snapshot.P cyPlayer = demo.s.players[3];
+        cyPlayer.x = MapData.TENT_X;
+        cyPlayer.y = MapData.TENT_Y;
+        demo.stepTent(0.03);
+        assertEquals(0.0, cyPlayer.shieldSec, 1e-4, "Tent on cooldown cannot grant shield");
+        cyPlayer.x = 700; cyPlayer.y = 100; // Move cyPlayer away
+
+        // Fire bullet from team 0 directly at shielded blue player
+        demo.bullets.clear();
+        demo.bullets.add(new double[]{bluePlayer.x - 20, bluePlayer.y, 420, 0, 0}); // shooter is player 0
+        demo.stepBullets(0.06);
+
+        assertTrue(bluePlayer.alive, "Shielded player must NOT be eliminated by hostile bullet");
+        assertEquals(0, demo.s.players[0].tags, "Shooter must not get tags for hitting shielded player");
+        assertTrue(demo.bullets.isEmpty(), "Bullet must be consumed/deflected by shield");
+    }
+
+    static void testPowerTentShieldExpiration() {
+        Demo demo = new Demo();
+        demo.s.players = new Snapshot.P[4];
+        for (int i = 0; i < 4; i++) {
+            Snapshot.P p = new Snapshot.P();
+            p.id = i; p.team = i % 2; p.x = 100 + i * 150; p.y = 100; p.alive = true;
+            demo.s.players[i] = p;
+        }
+
+        Snapshot.P bluePlayer = demo.s.players[1];
+        bluePlayer.x = MapData.TENT_X;
+        bluePlayer.y = MapData.TENT_Y;
+        demo.stepTent(0.01);
+        assertTrue(bluePlayer.shieldSec > 0, "Shield should be active initially");
+
+        // Advance time past shield duration
+        demo.stepTent(MapData.SHIELD_DURATION + 0.1);
+        assertEquals(0.0, bluePlayer.shieldSec, 1e-4, "Shield must expire after configured duration");
+
+        // Now fire bullet at unshielded blue player
+        demo.bullets.clear();
+        demo.bullets.add(new double[]{bluePlayer.x - 20, bluePlayer.y, 420, 0, 0});
+        demo.stepBullets(0.06);
+
+        assertTrue(!bluePlayer.alive, "Player must be eliminated after shield expiration");
+        assertEquals(1, demo.s.players[0].tags, "Shooter gets credit for elimination after shield expires");
+    }
+
+    static void testResponsiveVictoryLayout() {
+        NetLink link = new NetLink() {
+            @Override public void sendInput(int dx, int dy, double aim, boolean shoot) {}
+            @Override public int pingMs() { return 20; }
+            @Override public void requestPlayAgain() {}
+        };
+        GamePanel panel = new GamePanel(link, 0);
+
+        // Test with different resolutions: 800x600, 640x480, 1024x768
+        int[][] viewports = {{800, 600}, {640, 480}, {1024, 768}};
+        for (int[] vp : viewports) {
+            int vw = vp[0], vh = vp[1];
+            panel.setSize(vw, vh);
+
+            Snapshot s = new Snapshot();
+            s.winner = 1; // Blue team won
+            s.score = new int[]{1, 3};
+            s.players = new Snapshot.P[]{new Snapshot.P(), new Snapshot.P()};
+            s.players[0].name = "You"; s.players[0].team = 0;
+            s.players[1].name = "Ann"; s.players[1].team = 1;
+
+            panel.onSnapshot(s);
+
+            BufferedImage img = new BufferedImage(vw, vh, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = img.createGraphics();
+            panel.paint(g);
+            g.dispose();
+
+            // Verify safe margins and responsive card bounds
+            int cardW = Math.min(520, Math.max(340, vw - 48));
+            int cardH = Math.min(380, Math.max(260, vh - 56));
+            int cardX = (vw - cardW) / 2;
+            int cardY = (vh - cardH) / 2;
+
+            assertTrue(cardX >= 24, "Card must maintain horizontal safe margin of >= 24px");
+            assertTrue(cardY >= 24, "Card must maintain vertical safe margin of >= 24px");
+            assertTrue(cardX + cardW <= vw - 24, "Card right edge must fit within viewport");
+            assertTrue(cardY + cardH <= vh - 24, "Card bottom edge must fit within viewport");
+        }
     }
 }

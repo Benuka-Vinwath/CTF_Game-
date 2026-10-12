@@ -10,6 +10,7 @@ public final class Snapshot {
         public double x, y;
         public double aim; // radians, where the gun points
         public boolean alive = true;
+        public double shieldSec; // remaining invulnerability seconds
     }
 
     public static final class F {
@@ -23,6 +24,7 @@ public final class Snapshot {
     public int[] score = new int[2];
     public int timeLeftSec;
     public int winner = -1;                     // -1 = round running
+    public double tentCooldown;                 // remaining cooldown before tent can be used again
 
     long arrivedNs; // set by GamePanel on receipt, used for interpolation
 }
