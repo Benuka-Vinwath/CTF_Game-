@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Run CTF Client Demo",
+            "request": "launch",
+            "mainClass": "ctf.client.Demo",
+            "projectName": "CTF_Game"
+        }
+    ]
+}

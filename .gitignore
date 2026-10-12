@@ -1,0 +1,8 @@
+# Build output
+out/
+bin/
+*.class
+
+# OS artifacts
+.DS_Store
+Thumbs.db

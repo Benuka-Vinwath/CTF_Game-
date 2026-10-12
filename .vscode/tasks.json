@@ -1,0 +1,26 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Compile CTF Client",
+            "type": "shell",
+            "command": "javac -d out src/ctf/client/*.java",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$javac"]
+        },
+        {
+            "label": "Run CTF Client Demo",
+            "type": "shell",
+            "command": "java -cp out ctf.client.Demo",
+            "dependsOn": ["Compile CTF Client"],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        }
+    ]
+}
