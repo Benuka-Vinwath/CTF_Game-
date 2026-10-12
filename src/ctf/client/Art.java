@@ -347,5 +347,127 @@ final class Art {
         }
     }
 
+    /** Glassmorphic frosted transparent window with bevel highlights, chromatic sheen, and gemstone corners. */
+    static void glassCard(Graphics2D g, int x, int y, int w, int h, Color accent, double time, boolean fx, boolean hovered) {
+        // 1. Soft atmospheric colored back-glow around and behind the glass
+        if (fx) {
+            glow(g, accent, x + w / 2.0, y + h / 2.0, Math.max(w, h) / 2 + 40, hovered ? 0.45f : 0.30f);
+            glow(g, new Color(155, 55, 255), x + w / 2.0, y + h / 2.0, Math.max(w, h) / 2 + 65, 0.22f);
+        }
+
+        Composite oldComp = g.getComposite();
+        Paint oldPaint = g.getPaint();
+        Stroke oldSt = g.getStroke();
+
+        // 2. Deep frosted drop shadow underneath the glass window
+        g.setColor(new Color(2, 1, 8, 160));
+        g.fillRoundRect(x + 4, y + 8, w, h, 24, 24);
+
+        // 3. Translucent frosted glass body (crystalline dark-violet tint allowing fireworks & arena through)
+        GradientPaint glassTint = new GradientPaint(
+            x, y, new Color(24, 14, 44, hovered ? 135 : 115),
+            x + w, y + h, new Color(10, 6, 22, hovered ? 165 : 145)
+        );
+        g.setPaint(glassTint);
+        g.fillRoundRect(x, y, w, h, 20, 20);
+
+        // 4. Subtle inner stardust motes drifting inside the glass
+        if (fx) {
+            for (int i = 0; i < 7; i++) {
+                double mx = x + 24 + ((i * 73 + (int)(time * 15)) % (w - 48));
+                double my = y + h - 16 - ((i * 47 + (int)(time * 28)) % (h - 32));
+                double mp = 0.5 + 0.5 * Math.sin(time * 3.0 + i * 1.7);
+                g.setColor(new Color(255, 255, 255, (int)(140 * mp)));
+                g.fillRect((int) mx, (int) my, 2, 2);
+            }
+        }
+
+        // 5. Specular diagonal glass sheen across the upper section
+        Path2D.Double sheen = new Path2D.Double();
+        sheen.moveTo(x + 3, y + 3);
+        sheen.lineTo(x + w - 3, y + 3);
+        sheen.lineTo(x + w - 3, y + (int)(h * 0.46));
+        sheen.lineTo(x + 3, y + (int)(h * 0.18));
+        sheen.closePath();
+
+        GradientPaint sheenPaint = new GradientPaint(
+            x, y, new Color(255, 255, 255, hovered ? 52 : 40),
+            x, y + (int)(h * 0.46), new Color(255, 255, 255, 0)
+        );
+        g.setPaint(sheenPaint);
+        g.fill(sheen);
+
+        // Razor-sharp curved top bevel highlight hairline
+        g.setColor(new Color(255, 255, 255, hovered ? 180 : 130));
+        g.setStroke(new BasicStroke(1.2f));
+        g.drawLine(x + 18, y + 2, x + w - 18, y + 2);
+
+        // 6. Frosted glass prismatic bevel rim (shimmering dynamic gradient)
+        g.setStroke(new BasicStroke(hovered ? 2.4f : 1.8f));
+        double shift = Math.sin(time * 2.8);
+        Color topRim = new Color(255, 255, 255, (int)(160 + shift * 35));
+        Color botRim = new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), (int)(130 - shift * 35));
+        GradientPaint rimPaint = new GradientPaint(x, y, topRim, x + w, y + h, botRim);
+        g.setPaint(rimPaint);
+        g.drawRoundRect(x, y, w, h, 20, 20);
+
+        // Inner glowing accent line
+        g.setStroke(new BasicStroke(1.0f));
+        g.setColor(new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), hovered ? 110 : 65));
+        g.drawRoundRect(x + 3, y + 3, w - 6, h - 6, 16, 16);
+
+        // 7. Ornate Celestial Gemstone Corner Brackets
+        Color gemRim = hovered ? Color.WHITE : new Color(220, 225, 255);
+        g.setColor(gemRim);
+        g.setStroke(new BasicStroke(1.5f));
+        // Top-left
+        g.drawLine(x + 4, y + 14, x + 4, y + 4); g.drawLine(x + 4, y + 4, x + 14, y + 4);
+        // Top-right
+        g.drawLine(x + w - 14, y + 4, x + w - 4, y + 4); g.drawLine(x + w - 4, y + 4, x + w - 4, y + 14);
+        // Bottom-left
+        g.drawLine(x + 4, y + h - 14, x + 4, y + h - 4); g.drawLine(x + 4, y + h - 4, x + 14, y + h - 4);
+        // Bottom-right
+        g.drawLine(x + w - 14, y + h - 4, x + w - 4, y + h - 4); g.drawLine(x + w - 4, y + h - 4, x + w - 4, y + h - 14);
+
+        // Glowing corner jewel facets
+        g.setColor(accent);
+        g.fillRect(x + 7, y + 7, 3, 3);
+        g.fillRect(x + w - 10, y + 7, 3, 3);
+        g.fillRect(x + 7, y + h - 10, 3, 3);
+        g.fillRect(x + w - 10, y + h - 10, 3, 3);
+
+        // 8. Sparkling diamond star glints around the frame
+        starGlint(g, x + 8, y + 8, time, 7);
+        starGlint(g, x + w - 8, y + 8, time + 1.1, 7);
+        starGlint(g, x + 8, y + h - 8, time + 2.2, 6);
+        starGlint(g, x + w - 8, y + h - 8, time + 3.3, 6);
+        starGlint(g, x + w / 2.0, y + 1, time * 1.5 + 0.5, 5);
+
+        g.setStroke(oldSt);
+        g.setPaint(oldPaint);
+        g.setComposite(oldComp);
+    }
+
+    /** Sparkling 8-point diamond celestial light glint with cross flares. */
+    static void starGlint(Graphics2D g, double x, double y, double t, int size) {
+        double pulse = Math.max(0, Math.sin(t * 3.5));
+        if (pulse < 0.15) return;
+        int s = (int) Math.round(size * pulse);
+        int alpha = (int)(255 * pulse);
+        // Primary cross rays
+        g.setColor(new Color(255, 255, 255, alpha));
+        g.fillRect((int) x - s, (int) y - 1, s * 2 + 1, 2);
+        g.fillRect((int) x - 1, (int) y - s, 2, s * 2 + 1);
+        // Diagonal diamond rays
+        int ds = Math.max(1, s / 2);
+        for (int d = -ds; d <= ds; d++) {
+            g.fillRect((int) x + d, (int) y + d, 1, 1);
+            g.fillRect((int) x + d, (int) y - d, 1, 1);
+        }
+        // Blinding white core
+        g.setColor(Color.WHITE);
+        g.fillRect((int) x - 1, (int) y - 1, 2, 2);
+    }
+
     private Art() {}
 }

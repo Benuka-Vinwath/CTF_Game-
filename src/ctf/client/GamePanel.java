@@ -96,7 +96,7 @@ public class GamePanel extends JPanel {
                 if (k == KeyEvent.VK_L) link.toggleLagSim();
                 if (k == KeyEvent.VK_V) shakeOn = !shakeOn;
                 if (k == KeyEvent.VK_F) fx = !fx; // optional effects off if they cost frames
-                if (k == KeyEvent.VK_ENTER && last != null && last.winner >= 0) link.requestPlayAgain();
+                if ((k == KeyEvent.VK_ENTER || k == KeyEvent.VK_SPACE) && last != null && last.winner >= 0) link.requestPlayAgain();
             }
             @Override public void keyReleased(KeyEvent e) {
                 keys.remove(e.getKeyCode());
@@ -106,12 +106,19 @@ public class GamePanel extends JPanel {
         MouseAdapter m = new MouseAdapter() {
             @Override public void mouseMoved(MouseEvent e) {
                 mouseX = e.getX(); mouseY = e.getY();
-                if (last != null && last.winner >= 0) hoverPlayAgain = btnPlayAgainBounds.contains(mouseX, mouseY);
+                if (last != null && last.winner >= 0) {
+                    boolean prevHover = hoverPlayAgain;
+                    hoverPlayAgain = btnPlayAgainBounds.contains(mouseX, mouseY);
+                    if (hoverPlayAgain != prevHover) {
+                        setCursor(Cursor.getPredefinedCursor(hoverPlayAgain ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                    }
+                }
             }
             @Override public void mouseDragged(MouseEvent e) { mouseMoved(e); }
             @Override public void mousePressed(MouseEvent e) {
                 if (e.getButton() != MouseEvent.BUTTON1) return;
                 if (last != null && last.winner >= 0 && btnPlayAgainBounds.contains(e.getX(), e.getY())) {
+                    setCursor(Cursor.getDefaultCursor());
                     link.requestPlayAgain();
                     return;
                 }
@@ -734,24 +741,23 @@ public class GamePanel extends JPanel {
         int vw = getWidth() > 0 ? getWidth() : MapData.W;
         int vh = getHeight() > 0 ? getHeight() : MapData.H;
 
-        // Dark fantasy vignette backdrop overlay
-        g.setColor(new Color(4, 2, 14, 215));
+        // Cinematic soft translucent dark veil (lets arena, players & fireworks shine through!)
+        g.setColor(new Color(4, 2, 14, 115));
         g.fillRect(0, 0, vw, vh);
 
-        // Responsive card dimensions inside safe screen margins
+        // Responsive glassy window dimensions with safe margins
         int cardW = Math.min(520, Math.max(340, vw - 48));
-        int cardH = Math.min(380, Math.max(260, vh - 56));
+        int cardH = Math.min(270, Math.max(210, vh - 60));
         int cardX = (vw - cardW) / 2;
         int cardY = (vh - cardH) / 2;
 
         int winner = s.winner;
-        Color teamColor = TEAM[winner];
-        Color violet = new Color(160, 60, 245);
-        Color accent = winner == 1 ? new Color(60, 220, 255) : new Color(255, 60, 100);
+        Color violet = new Color(175, 75, 255);
+        Color accent = winner == 1 ? new Color(60, 220, 255) : new Color(255, 65, 115);
 
-        // Expanding magical energy ring from celebration center
-        double maxRing = Math.min(vw, vh) * 0.55;
-        double ringR = (victoryTimer * 140) % maxRing;
+        // 1. Expanding celestial shockwave rings
+        double maxRing = Math.min(vw, vh) * 0.65;
+        double ringR = (victoryTimer * 160) % maxRing;
         float ringAlpha = (float) Math.max(0, 1.0 - ringR / maxRing);
         Composite oldComp = g.getComposite();
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, ringAlpha * 0.7f));
@@ -760,61 +766,94 @@ public class GamePanel extends JPanel {
         g.draw(new Ellipse2D.Double(vw / 2.0 - ringR, vh / 2.0 - ringR, ringR * 2, ringR * 2));
         g.setComposite(oldComp);
 
-        // Main celebration card panel with violet border and inner glow
-        Art.panel(g, cardX, cardY, cardW, cardH, violet);
+        // 2. Frosted transparent glassy window!
+        Art.glassCard(g, cardX, cardY, cardW, cardH, accent, time, fx, hoverPlayAgain);
+        btnPlayAgainBounds.setBounds(cardX, cardY, cardW, cardH);
 
-        // Decorative corner flame braziers
-        Art.flameBrazier(g, cardX + 32, cardY + cardH - 18, accent, time, fx);
-        Art.flameBrazier(g, cardX + cardW - 32, cardY + cardH - 18, accent, time + 1.2, fx);
+        // 3. Decorative mystical flame braziers at the outer sides of the glass window
+        Art.flameBrazier(g, cardX - 16, cardY + cardH - 14, accent, time, fx);
+        Art.flameBrazier(g, cardX + cardW + 16, cardY + cardH - 14, accent, time + 1.2, fx);
 
-        // Prominent animated heading: "VICTORY!"
-        int headingSize = cardW > 440 ? 42 : 32;
-        g.setFont(Art.font(headingSize));
-        double shimmer = 0.8 + 0.2 * Math.sin(time * 4);
-        if (fx) Art.glow(g, accent, cardX + cardW / 2.0, cardY + 46, 50, (float)(0.4 * shimmer));
-        Art.textCenter(g, "VICTORY!", cardX, cardW, cardY + 52, violet);
-        Art.textCenter(g, "VICTORY!", cardX - 1, cardW, cardY + 51, Color.WHITE);
+        // 4. Rotating celestial aurora light rays and sacred runic halo behind "VICTORY"
+        double vicCenterX = cardX + cardW / 2.0;
+        double bob = Math.sin(time * 2.8) * 3;
+        double vicCenterY = cardY + cardH / 2.0 + bob;
 
-        // Winning team & player verdict
-        Snapshot.P me = find(s, myId);
-        boolean won = me != null && me.team == winner;
-        String verdict = me == null ? TEAM_NAME[winner] + " TEAM TRIUMPHANT" : won ? "YOU ARE VICTORIOUS!" : TEAM_NAME[winner] + " TEAM WINS";
-        g.setFont(Art.font(16));
-        Art.textCenter(g, verdict, cardX, cardW, cardY + 82, teamColor);
+        if (fx) {
+            // Rotating sacred geometry runic halo behind "VICTORY"
+            Composite haloComp = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.22f));
+            g.setColor(accent);
+            Stroke haloSt = g.getStroke();
+            g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{6, 6}, (float)(time * 10 % 12)));
+            double haloR = cardH * 0.38;
+            g.draw(new Ellipse2D.Double(vicCenterX - haloR, vicCenterY - haloR, haloR * 2, haloR * 2));
+            g.setStroke(haloSt);
+            g.setComposite(haloComp);
 
-        // Celebratory subtitle
-        g.setFont(Art.font(12));
-        Art.textCenter(g, "CHAMPIONS OF THE ANCIENT SANCTUARY", cardX, cardW, cardY + 104, new Color(180, 185, 215));
+            // 12 rotating celestial aurora light rays radiating behind "VICTORY"
+            Composite rayComp = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.20f));
+            for (int i = 0; i < 12; i++) {
+                double rayAng = time * 0.30 + i * (Math.PI * 2 / 12);
+                double rayLen = cardW * 0.52;
+                Path2D.Double ray = new Path2D.Double();
+                ray.moveTo(vicCenterX, vicCenterY);
+                ray.lineTo(vicCenterX + Math.cos(rayAng - 0.08) * rayLen, vicCenterY + Math.sin(rayAng - 0.08) * rayLen);
+                ray.lineTo(vicCenterX + Math.cos(rayAng + 0.08) * rayLen, vicCenterY + Math.sin(rayAng + 0.08) * rayLen);
+                ray.closePath();
+                g.setPaint(new RadialGradientPaint(
+                    new Point2D.Double(vicCenterX, vicCenterY), (float) rayLen,
+                    new float[]{0f, 1f},
+                    new Color[]{new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 180), new Color(violet.getRed(), violet.getGreen(), violet.getBlue(), 0)}
+                ));
+                g.fill(ray);
+            }
+            g.setComposite(rayComp);
 
-        // Final score badge
-        int scoreBoxW = Math.min(270, cardW - 70);
-        int scoreBoxX = cardX + (cardW - scoreBoxW) / 2;
-        int scoreBoxY = cardY + 120;
-        Art.panel(g, scoreBoxX, scoreBoxY, scoreBoxW, 46, Art.BORDER);
-        g.setFont(Art.font(20));
-        Art.text(g, "RED " + s.score[0], scoreBoxX + 18, scoreBoxY + 30, TEAM[0]);
-        Art.text(g, "—", scoreBoxX + scoreBoxW / 2 - 6, scoreBoxY + 28, new Color(160, 165, 190));
-        Art.text(g, s.score[1] + " BLUE", scoreBoxX + scoreBoxW - 84, scoreBoxY + 30, TEAM[1]);
+            // Multilayered atmospheric glow behind "VICTORY"
+            Art.glow(g, violet, vicCenterX, vicCenterY, 90, 0.45f);
+            Art.glow(g, accent, vicCenterX, vicCenterY, 52, 0.70f);
+            Art.glow(g, Color.WHITE, vicCenterX, vicCenterY, 24, 0.85f);
+        }
 
-        // Rematch / Next-match button
-        int btnW = Math.min(230, cardW - 60);
-        int btnH = 38;
-        int btnX = cardX + (cardW - btnW) / 2;
-        int btnY = cardY + cardH - 62;
-        btnPlayAgainBounds.setBounds(btnX, btnY, btnW, btnH);
+        // 5. Majestic display of the only word: "VICTORY"
+        String vicText = "VICTORY";
+        int fontSize = Math.min(74, Math.max(50, (int)(cardW * 0.175)));
+        Font vicFont = new Font(Font.SERIF, Font.BOLD, fontSize);
+        g.setFont(vicFont);
+        FontMetrics fm = g.getFontMetrics();
+        int strW = fm.stringWidth(vicText);
+        int strX = cardX + (cardW - strW) / 2;
+        int strY = (int) vicCenterY + fm.getAscent() / 2 - 4;
 
-        Color btnBorder = hoverPlayAgain ? Color.WHITE : teamColor;
-        Color btnFill = hoverPlayAgain ? new Color(120, 45, 190, 230) : new Color(24, 18, 42, 230);
-        g.setColor(btnFill);
-        g.fillRoundRect(btnX, btnY, btnW, btnH, 8, 8);
-        g.setColor(btnBorder);
-        g.setStroke(new BasicStroke(hoverPlayAgain ? 2.5f : 1.8f));
-        g.drawRoundRect(btnX, btnY, btnW, btnH, 8, 8);
+        // Layer A: Deep shadow
+        g.setColor(new Color(6, 2, 14, 230));
+        g.drawString(vicText, strX, strY + 5);
 
-        g.setFont(Art.font(15));
-        Art.textCenter(g, "PLAY AGAIN", btnX, btnW, btnY + 24, Color.WHITE);
-        g.setFont(Art.font(11));
-        Art.textCenter(g, "(Press ENTER or Click)", cardX, cardW, cardY + cardH - 10, new Color(175, 175, 205));
+        // Layer B: Violet ambient rim shadow
+        g.setColor(new Color(110, 30, 200, 190));
+        g.drawString(vicText, strX, strY + 2);
+        g.drawString(vicText, strX + 1, strY + 1);
+
+        // Layer C: Crystalline iridescent vertical gradient
+        Paint oldPaint = g.getPaint();
+        GradientPaint vicGrad = new GradientPaint(
+            strX, strY - fm.getAscent(), Color.WHITE,
+            strX, strY + 2, accent
+        );
+        g.setPaint(vicGrad);
+        g.drawString(vicText, strX, strY);
+
+        // Layer D: Crisp top bevel specular sheen
+        g.setColor(new Color(255, 255, 255, 210));
+        g.drawString(vicText, strX, strY - 1);
+        g.setPaint(oldPaint);
+
+        // Layer E: Sparkling diamond star glints on the letters
+        Art.starGlint(g, strX + fm.charWidth('V') * 0.25, strY - fm.getAscent() * 0.88, time, 8);
+        Art.starGlint(g, strX + strW * 0.52, strY - fm.getAscent() * 0.92, time + 1.3, 9);
+        Art.starGlint(g, strX + strW - fm.charWidth('Y') * 0.35, strY - fm.getAscent() * 0.88, time + 2.5, 8);
     }
 
     private void triggerOpeningCelebration(int winner) {
