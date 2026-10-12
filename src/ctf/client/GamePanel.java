@@ -55,6 +55,13 @@ public class GamePanel extends JPanel {
     private int celebrationWinner = -1;
     private final Rectangle btnPlayAgainBounds = new Rectangle();
     private boolean hoverPlayAgain;
+    private boolean viewLeaderboardManual;
+    private final Rectangle btnLeaderboardToggle = new Rectangle();
+    private boolean hoverLeaderboardToggle;
+    private final Rectangle btnLeaderboardPlayAgain = new Rectangle();
+    private boolean hoverLeaderboardPlayAgain;
+    private final Rectangle btnLeaderboardBack = new Rectangle();
+    private boolean hoverLeaderboardBack;
     private double nextRocketTime;
 
     // predicted own bullets: {ox, oy, vx, vy, team, age, matchedBefore, x, y}; see reconcileGhosts()
@@ -92,35 +99,72 @@ public class GamePanel extends JPanel {
             @Override public void keyPressed(KeyEvent e) {
                 int k = e.getKeyCode();
                 keys.add(k);
-                if (k == KeyEvent.VK_TAB) showBoard = true;
+                if (k == KeyEvent.VK_TAB) {
+                    if (last != null && last.winner >= 0) {
+                        viewLeaderboardManual = !viewLeaderboardManual;
+                    } else {
+                        showBoard = true;
+                    }
+                }
                 if (k == KeyEvent.VK_L) link.toggleLagSim();
                 if (k == KeyEvent.VK_V) shakeOn = !shakeOn;
                 if (k == KeyEvent.VK_F) fx = !fx; // optional effects off if they cost frames
-                if ((k == KeyEvent.VK_ENTER || k == KeyEvent.VK_SPACE) && last != null && last.winner >= 0) link.requestPlayAgain();
+                if ((k == KeyEvent.VK_ENTER || k == KeyEvent.VK_SPACE) && last != null && last.winner >= 0) {
+                    setCursor(Cursor.getDefaultCursor());
+                    link.requestPlayAgain();
+                }
             }
             @Override public void keyReleased(KeyEvent e) {
                 keys.remove(e.getKeyCode());
-                if (e.getKeyCode() == KeyEvent.VK_TAB) showBoard = false;
+                if (e.getKeyCode() == KeyEvent.VK_TAB && (last == null || last.winner < 0)) showBoard = false;
             }
         });
         MouseAdapter m = new MouseAdapter() {
             @Override public void mouseMoved(MouseEvent e) {
                 mouseX = e.getX(); mouseY = e.getY();
                 if (last != null && last.winner >= 0) {
-                    boolean prevHover = hoverPlayAgain;
-                    hoverPlayAgain = btnPlayAgainBounds.contains(mouseX, mouseY);
-                    if (hoverPlayAgain != prevHover) {
-                        setCursor(Cursor.getPredefinedCursor(hoverPlayAgain ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                    boolean autoLb = (last.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
+                    boolean showingLb = autoLb || viewLeaderboardManual;
+                    boolean anyHover;
+                    if (!showingLb) {
+                        hoverPlayAgain = btnPlayAgainBounds.contains(mouseX, mouseY);
+                        hoverLeaderboardToggle = btnLeaderboardToggle.contains(mouseX, mouseY);
+                        anyHover = hoverPlayAgain || hoverLeaderboardToggle;
+                    } else {
+                        hoverLeaderboardPlayAgain = btnLeaderboardPlayAgain.contains(mouseX, mouseY);
+                        hoverLeaderboardBack = btnLeaderboardBack.contains(mouseX, mouseY);
+                        anyHover = hoverLeaderboardPlayAgain || hoverLeaderboardBack;
                     }
+                    setCursor(Cursor.getPredefinedCursor(anyHover ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                 }
             }
             @Override public void mouseDragged(MouseEvent e) { mouseMoved(e); }
             @Override public void mousePressed(MouseEvent e) {
                 if (e.getButton() != MouseEvent.BUTTON1) return;
-                if (last != null && last.winner >= 0 && btnPlayAgainBounds.contains(e.getX(), e.getY())) {
-                    setCursor(Cursor.getDefaultCursor());
-                    link.requestPlayAgain();
-                    return;
+                if (last != null && last.winner >= 0) {
+                    boolean autoLb = (last.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
+                    boolean showingLb = autoLb || viewLeaderboardManual;
+                    if (!showingLb) {
+                        if (btnLeaderboardToggle.contains(e.getX(), e.getY())) {
+                            viewLeaderboardManual = true;
+                            return;
+                        }
+                        if (btnPlayAgainBounds.contains(e.getX(), e.getY())) {
+                            setCursor(Cursor.getDefaultCursor());
+                            link.requestPlayAgain();
+                            return;
+                        }
+                    } else {
+                        if (btnLeaderboardPlayAgain.contains(e.getX(), e.getY())) {
+                            setCursor(Cursor.getDefaultCursor());
+                            link.requestPlayAgain();
+                            return;
+                        }
+                        if (btnLeaderboardBack.contains(e.getX(), e.getY())) {
+                            viewLeaderboardManual = false;
+                            return;
+                        }
+                    }
                 }
                 mouseMoved(e); // aim at the click point, not at the last move event
                 mouseDown = shootLatch = true; // latch: a click shorter than one send interval still fires
@@ -492,8 +536,15 @@ public class GamePanel extends JPanel {
         if (fx) g.drawImage(vignette, 0, 0, null);
         if (flash > 0) { g.setColor(new Color(255, 0, 0, (int) (110 * flash))); g.fillRect(0, 0, MapData.W, MapData.H); }
         drawHud(g, s);
-        if (showBoard) drawBoard(g, s);
-        if (s.winner >= 0) drawResponsiveVictory(g, s);
+        if (showBoard && s.winner < 0) drawBoard(g, s);
+        if (s.winner >= 0) {
+            boolean autoLb = (s.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
+            if (autoLb || viewLeaderboardManual) {
+                drawPostMatchLeaderboard(g, s);
+            } else {
+                drawResponsiveVictory(g, s);
+            }
+        }
         g.dispose();
     }
 
@@ -854,6 +905,242 @@ public class GamePanel extends JPanel {
         Art.starGlint(g, strX + fm.charWidth('V') * 0.25, strY - fm.getAscent() * 0.88, time, 8);
         Art.starGlint(g, strX + strW * 0.52, strY - fm.getAscent() * 0.92, time + 1.3, 9);
         Art.starGlint(g, strX + strW - fm.charWidth('Y') * 0.35, strY - fm.getAscent() * 0.88, time + 2.5, 8);
+
+        // Sleek interactive toggle button to view Match Statistics early or show countdown to auto-transition
+        int toggleW = Math.min(260, cardW - 60);
+        int toggleH = 28;
+        int toggleX = cardX + (cardW - toggleW) / 2;
+        int toggleY = Math.min(vh - 36, cardY + cardH + 10);
+        btnLeaderboardToggle.setBounds(toggleX, toggleY, toggleW, toggleH);
+
+        double elapsed = s.matchEndElapsedSec > 0 ? s.matchEndElapsedSec : victoryTimer;
+        int secRemaining = Math.max(0, (int) Math.ceil(60.0 - elapsed));
+        String toggleText = "STATS [TAB] (" + secRemaining + "s)";
+
+        Color tFill = hoverLeaderboardToggle ? new Color(255, 255, 255, 45) : new Color(20, 10, 35, 180);
+        Color tBorder = hoverLeaderboardToggle ? Color.WHITE : new Color(175, 75, 255, 140);
+        g.setColor(tFill);
+        g.fillRoundRect(toggleX, toggleY, toggleW, toggleH, 14, 14);
+        g.setColor(tBorder);
+        g.setStroke(new BasicStroke(hoverLeaderboardToggle ? 1.8f : 1.0f));
+        g.drawRoundRect(toggleX, toggleY, toggleW, toggleH, 14, 14);
+
+        g.setFont(Art.font(11));
+        Art.textCenter(g, toggleText, toggleX, toggleW, toggleY + 18, Color.WHITE);
+    }
+
+    private void drawPostMatchLeaderboard(Graphics2D g, Snapshot s) {
+        int vw = getWidth() > 0 ? getWidth() : MapData.W;
+        int vh = getHeight() > 0 ? getHeight() : MapData.H;
+
+        // Cinematic dark backdrop so fireworks and torches shine through softly
+        g.setColor(new Color(4, 2, 14, 175));
+        g.fillRect(0, 0, vw, vh);
+
+        int cardW = Math.min(740, Math.max(340, vw - 36));
+        int cardH = Math.min(540, Math.max(380, vh - 36));
+        int cardX = (vw - cardW) / 2;
+        int cardY = (vh - cardH) / 2;
+
+        int winner = s.winner;
+        Color accent = winner == 1 ? new Color(60, 220, 255) : new Color(255, 65, 115);
+
+        // Glassmorphic main results window
+        Art.glassCard(g, cardX, cardY, cardW, cardH, accent, time, fx, false);
+
+        // 1. Header with Golden Crown and Match Results Title
+        Art.crown(g, cardX + cardW / 2.0, cardY + 22, Color.YELLOW, 22, time);
+
+        g.setFont(new Font(Font.SERIF, Font.BOLD, Math.min(22, (int)(cardW * 0.045))));
+        String headerTitle = "MATCH RESULTS & BATTLE STATISTICS";
+        FontMetrics fmH = g.getFontMetrics();
+        int thX = cardX + (cardW - fmH.stringWidth(headerTitle)) / 2;
+        g.setColor(new Color(6, 2, 14, 220));
+        g.drawString(headerTitle, thX, cardY + 47);
+        g.setColor(Color.WHITE);
+        g.drawString(headerTitle, thX, cardY + 46);
+
+        String verdict = (winner == 1 ? "BLUE" : "RED") + " TEAM TRIUMPHANT";
+        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        FontMetrics fmV = g.getFontMetrics();
+        g.setColor(TEAM[winner]);
+        g.drawString(verdict, cardX + (cardW - fmV.stringWidth(verdict)) / 2, cardY + 64);
+
+        // Aggregate authoritative team statistics
+        int[] teamKills = new int[2], teamDeaths = new int[2], teamCaps = new int[2];
+        for (Snapshot.P p : s.players) {
+            if (p.team >= 0 && p.team < 2) {
+                teamKills[p.team] += p.tags;
+                teamDeaths[p.team] += p.deaths;
+                teamCaps[p.team] += p.captures;
+            }
+        }
+
+        // 2. Team Comparison Cards (Side-by-side or stacked on tiny viewports)
+        boolean sideBySide = cardW >= 480;
+        int teamY = cardY + 74;
+        int teamH = sideBySide ? 76 : 60;
+        int teamW = sideBySide ? (cardW - 32) / 2 : cardW - 24;
+
+        for (int t = 0; t < 2; t++) {
+            int tx = sideBySide ? (t == 0 ? cardX + 12 : cardX + 20 + teamW) : cardX + 12;
+            int ty = sideBySide ? teamY : teamY + t * 64;
+
+            boolean won = t == winner;
+            Color tc = TEAM[t];
+            Color fillC = won ? new Color(tc.getRed(), tc.getGreen(), tc.getBlue(), 35) : new Color(20, 15, 35, 120);
+            Color borderC = won ? tc : new Color(80, 70, 100, 160);
+
+            g.setColor(fillC);
+            g.fillRoundRect(tx, ty, teamW, teamH, 12, 12);
+            g.setColor(borderC);
+            g.setStroke(new BasicStroke(won ? 2.0f : 1.0f));
+            g.drawRoundRect(tx, ty, teamW, teamH, 12, 12);
+
+            if (won) {
+                Art.crown(g, tx + 18, ty + 18, Color.YELLOW, 16, time);
+            }
+
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+            g.setColor(tc);
+            g.drawString(TEAM_NAME[t] + " TEAM" + (won ? "  * WINNER" : ""), tx + (won ? 32 : 14), ty + 20);
+
+            // Team Score badge
+            String scoreStr = "SCORE: " + s.score[t];
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+            g.setColor(Color.WHITE);
+            g.drawString(scoreStr, tx + teamW - g.getFontMetrics().stringWidth(scoreStr) - 14, ty + 20);
+
+            // Metrics row: KILLS, DEATHS, CAPTURES
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+            int colW = (teamW - 24) / 3;
+            String[] labels = {"KILLS", "DEATHS", "CAPTURES"};
+            int[] vals = {teamKills[t], teamDeaths[t], teamCaps[t]};
+            for (int m = 0; m < 3; m++) {
+                int cx = tx + 12 + m * colW;
+                g.setColor(new Color(160, 165, 185));
+                g.drawString(labels[m], cx, ty + 42);
+                g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 15));
+                g.setColor(Color.WHITE);
+                g.drawString(String.valueOf(vals[m]), cx, ty + 62);
+                g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+            }
+        }
+
+        // 3. Individual Player Performance Table
+        int tableY = cardY + (sideBySide ? 162 : 210);
+        int tableX = cardX + 12;
+        int tableW = cardW - 24;
+
+        // Header strip
+        g.setColor(new Color(25, 16, 44, 210));
+        g.fillRoundRect(tableX, tableY, tableW, 26, 8, 8);
+        g.setColor(new Color(100, 70, 140, 150));
+        g.setStroke(new BasicStroke(1.0f));
+        g.drawRoundRect(tableX, tableY, tableW, 26, 8, 8);
+
+        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+        g.setColor(new Color(210, 205, 235));
+        int cRank = tableX + 8;
+        int cPlayer = tableX + 64;
+        int cTeam = tableX + (int)(tableW * 0.44);
+        int cScore = tableX + (int)(tableW * 0.58);
+        int cKills = tableX + (int)(tableW * 0.70);
+        int cDeaths = tableX + (int)(tableW * 0.81);
+        int cCaps = tableX + (int)(tableW * 0.91);
+
+        g.drawString("RANK", cRank, tableY + 17);
+        g.drawString("PLAYER", cPlayer, tableY + 17);
+        g.drawString("TEAM", cTeam, tableY + 17);
+        g.drawString("SCORE", cScore, tableY + 17);
+        g.drawString("KILLS", cKills, tableY + 17);
+        g.drawString("DEATHS", cDeaths, tableY + 17);
+        g.drawString("CAPTURES", cCaps, tableY + 17);
+
+        // Sort players according to strict ranking rules:
+        // 1. Score descending, 2. Captures descending, 3. Kills descending, 4. Deaths ascending
+        List<Snapshot.P> ranked = new ArrayList<>(Arrays.asList(s.players));
+        ranked.sort((a, b) -> {
+            if (b.score != a.score) return Integer.compare(b.score, a.score);
+            if (b.captures != a.captures) return Integer.compare(b.captures, a.captures);
+            if (b.tags != a.tags) return Integer.compare(b.tags, a.tags);
+            return Integer.compare(a.deaths, b.deaths);
+        });
+
+        int rowH = 28;
+        int maxRows = Math.min(ranked.size(), (cardH - (tableY - cardY) - 58) / rowH);
+        for (int i = 0; i < maxRows; i++) {
+            Snapshot.P p = ranked.get(i);
+            int ry = tableY + 30 + i * (rowH + 2);
+            int rank = i + 1;
+
+            // Row background
+            Color rowBg = (i % 2 == 0) ? new Color(20, 14, 38, 120) : new Color(30, 20, 52, 100);
+            if (rank == 1) rowBg = new Color(255, 215, 0, 25);
+            else if (rank == 2) rowBg = new Color(200, 220, 255, 20);
+            else if (rank == 3) rowBg = new Color(205, 127, 50, 20);
+
+            g.setColor(rowBg);
+            g.fillRoundRect(tableX, ry, tableW, rowH, 6, 6);
+
+            // Rank medal badge
+            Art.medalBadge(g, cRank, ry + 3, rank);
+
+            // Player name with (YOU) indicator
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+            boolean isMe = (p.id == myId);
+            g.setColor(isMe ? Color.WHITE : new Color(220, 225, 240));
+            String pName = p.name + (isMe ? " (YOU)" : "");
+            g.drawString(pName, cPlayer, ry + 19);
+
+            // Team tag
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+            g.setColor(TEAM[p.team]);
+            g.drawString(p.team == 0 ? "RED" : "BLUE", cTeam, ry + 19);
+
+            // Score
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+            g.setColor(new Color(255, 235, 140));
+            g.drawString(String.valueOf(p.score), cScore, ry + 19);
+
+            // Kills, Deaths, Captures
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+            g.setColor(Color.WHITE);
+            g.drawString(String.valueOf(p.tags), cKills, ry + 19);
+            g.drawString(String.valueOf(p.deaths), cDeaths, ry + 19);
+            g.drawString(String.valueOf(p.captures), cCaps, ry + 19);
+        }
+
+        // 4. Action Buttons (PLAY AGAIN / REMATCH, VIEW CELEBRATION)
+        int btnH = 34;
+        int btnW = Math.min(200, (cardW - 40) / 2);
+        int btnY = cardY + cardH - 46;
+
+        int btn1X = cardX + (cardW - (btnW * 2 + 16)) / 2;
+        int btn2X = btn1X + btnW + 16;
+        btnLeaderboardPlayAgain.setBounds(btn1X, btnY, btnW, btnH);
+        btnLeaderboardBack.setBounds(btn2X, btnY, btnW, btnH);
+
+        // Button 1: Play Again
+        Color b1Fill = hoverLeaderboardPlayAgain ? new Color(130, 50, 210, 230) : new Color(60, 25, 100, 200);
+        Color b1Border = hoverLeaderboardPlayAgain ? Color.WHITE : new Color(180, 80, 255);
+        g.setColor(b1Fill);
+        g.fillRoundRect(btn1X, btnY, btnW, btnH, 16, 16);
+        g.setColor(b1Border);
+        g.setStroke(new BasicStroke(hoverLeaderboardPlayAgain ? 2.0f : 1.2f));
+        g.drawRoundRect(btn1X, btnY, btnW, btnH, 16, 16);
+        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        Art.textCenter(g, "PLAY AGAIN", btn1X, btnW, btnY + 22, Color.WHITE);
+
+        // Button 2: View Celebration
+        Color b2Fill = hoverLeaderboardBack ? new Color(255, 255, 255, 45) : new Color(255, 255, 255, 18);
+        Color b2Border = hoverLeaderboardBack ? Color.WHITE : new Color(180, 180, 210, 120);
+        g.setColor(b2Fill);
+        g.fillRoundRect(btn2X, btnY, btnW, btnH, 16, 16);
+        g.setColor(b2Border);
+        g.setStroke(new BasicStroke(hoverLeaderboardBack ? 2.0f : 1.0f));
+        g.drawRoundRect(btn2X, btnY, btnW, btnH, 16, 16);
+        Art.textCenter(g, "< CELEBRATION", btn2X, btnW, btnY + 22, Color.WHITE);
     }
 
     private void triggerOpeningCelebration(int winner) {

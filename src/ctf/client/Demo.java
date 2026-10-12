@@ -19,6 +19,7 @@ public class Demo implements NetLink {
     final Random r = new Random();
     double clock = 300;
     double tentCooldown;
+    double matchEndElapsedSec;
     boolean lag;
 
     public static void main(String[] a) {
@@ -60,6 +61,16 @@ public class Demo implements NetLink {
             stepTent(dt);
             stepBullets(dt);
             clock = Math.max(0, clock - dt); s.timeLeftSec = (int) clock;
+            if (clock <= 0 && s.winner < 0) {
+                s.winner = s.score[1] > s.score[0] ? 1 : 0;
+            }
+            if (s.winner >= 0) {
+                matchEndElapsedSec += dt;
+                s.matchEndElapsedSec = matchEndElapsedSec;
+            } else {
+                matchEndElapsedSec = 0;
+                s.matchEndElapsedSec = 0;
+            }
             gp.onSnapshot(copy(s));
         }).start();
     }
@@ -114,6 +125,7 @@ public class Demo implements NetLink {
         }
         if (bf.state == Snapshot.CARRIED && Math.hypot(m.x - MapData.BASES[0][0], m.y - MapData.BASES[0][1]) < 45) {
             returnFlag(1); s.score[0]++; m.captures++;
+            m.score = m.captures * 100 + m.tags * 25;
             if (s.score[0] >= 3) s.winner = 0;
         }
     }
@@ -145,7 +157,9 @@ public class Demo implements NetLink {
                         gone = true; // absorbed / deflected by protective sanctuary shield!
                         break;
                     } else {
-                        p.alive = false; respawnAt[p.id] = now + 3000; sh.tags++; gone = true;
+                        p.alive = false; respawnAt[p.id] = now + 3000; sh.tags++; p.deaths++; gone = true;
+                        sh.score = sh.captures * 100 + sh.tags * 25;
+                        p.score = p.captures * 100 + p.tags * 25;
                         for (int t = 0; t < 2; t++) { // a tagged carrier drops the flag where they fell
                             Snapshot.F f = s.flags[t];
                             if (f.state == Snapshot.CARRIED && f.carrier == p.id) { f.state = Snapshot.DROPPED; f.carrier = -1; f.x = p.x; f.y = p.y; droppedAt[t] = now; }
@@ -180,7 +194,7 @@ public class Demo implements NetLink {
             Snapshot.P a = o.players[i], p = new Snapshot.P();
             p.aim = a.aim; p.id = a.id; p.name = a.name; p.team = a.team; p.x = a.x; p.y = a.y; p.alive = a.alive;
             p.shieldSec = a.shieldSec;
-            p.captures = a.captures; p.tags = a.tags; p.pingMs = a.pingMs;
+            p.captures = a.captures; p.tags = a.tags; p.deaths = a.deaths; p.score = a.score; p.pingMs = a.pingMs;
             c.players[i] = p;
         }
         for (int t = 0; t < 2; t++) {
@@ -190,6 +204,7 @@ public class Demo implements NetLink {
         c.bullets = o.bullets.clone();
         c.score = o.score.clone(); c.timeLeftSec = o.timeLeftSec; c.winner = o.winner;
         c.tentCooldown = o.tentCooldown;
+        c.matchEndElapsedSec = o.matchEndElapsedSec;
         return c;
     }
 
@@ -201,7 +216,14 @@ public class Demo implements NetLink {
         clock = 300;
         s.timeLeftSec = 300;
         s.tentCooldown = tentCooldown = 0;
-        for (Snapshot.P p : s.players) p.shieldSec = 0;
+        s.matchEndElapsedSec = matchEndElapsedSec = 0;
+        for (Snapshot.P p : s.players) {
+            p.shieldSec = 0;
+            p.tags = 0;
+            p.captures = 0;
+            p.deaths = 0;
+            p.score = 0;
+        }
         returnFlag(0);
         returnFlag(1);
     }

@@ -6,6 +6,8 @@ public final class Snapshot {
 
     public static final class P {
         public int id, team, pingMs, tags, captures;
+        public int deaths;                          // times eliminated
+        public int score;                           // individual match score (captures * 100 + tags * 25)
         public String name = "";
         public double x, y;
         public double aim; // radians, where the gun points
@@ -25,6 +27,7 @@ public final class Snapshot {
     public int timeLeftSec;
     public int winner = -1;                     // -1 = round running
     public double tentCooldown;                 // remaining cooldown before tent can be used again
+    public double matchEndElapsedSec;          // authoritative seconds elapsed since match was won
 
     long arrivedNs; // set by GamePanel on receipt, used for interpolation
 }

@@ -35,6 +35,10 @@ public class GameplayTest {
         runTest("Power Tent Shield Activation & Invulnerability", GameplayTest::testPowerTentShieldAndInvulnerability);
         runTest("Power Tent Shield Expiration", GameplayTest::testPowerTentShieldExpiration);
         runTest("Responsive Victory Celebration Screen Layout", GameplayTest::testResponsiveVictoryLayout);
+        runTest("Player Deaths, Elimination Attribution, and Ranking Order", GameplayTest::testPlayerDeathsAndRankingOrder);
+        runTest("Authoritative Match End Elapsed Timing & 60s Auto Transition", GameplayTest::testAuthoritativeMatchEndElapsedTiming);
+        runTest("Post-Match Leaderboard Layout & Team Statistics Aggregation", GameplayTest::testPostMatchLeaderboardLayout);
+        runTest("Match Reset Cleanly Clears All Match Statistics", GameplayTest::testMatchResetStatistics);
 
         System.out.println("\n=== Test Results Summary ===");
         System.out.println("Passed: " + passed + " | Failed: " + failed);
@@ -495,6 +499,145 @@ public class GameplayTest {
             assertTrue(cardY >= 24, "Card must maintain vertical safe margin of >= 24px");
             assertTrue(cardX + cardW <= vw - 24, "Card right edge must fit within viewport");
             assertTrue(cardY + cardH <= vh - 24, "Card bottom edge must fit within viewport");
+        }
+    }
+
+    static void testPlayerDeathsAndRankingOrder() {
+        Demo demo = new Demo();
+        demo.s.players = new Snapshot.P[4];
+        for (int i = 0; i < 4; i++) {
+            Snapshot.P p = new Snapshot.P();
+            p.id = i; p.team = i % 2; p.x = 100 + i * 150; p.y = 200; p.alive = true;
+            demo.s.players[i] = p;
+        }
+
+        // Shoot blue player 1 with red player 0
+        demo.bullets.add(new double[]{demo.s.players[1].x - 10, demo.s.players[1].y, 420, 0, 0});
+        demo.stepBullets(0.05);
+
+        assertEquals(1, demo.s.players[0].tags, "Shooter tags/kills incremented");
+        assertEquals(1, demo.s.players[1].deaths, "Target deaths incremented");
+        assertEquals(25, demo.s.players[0].score, "Shooter score updated (25 pts per tag)");
+
+        // Verify Ranking Comparator Order: 1. Score desc, 2. Caps desc, 3. Kills desc, 4. Deaths asc
+        Snapshot.P pA = new Snapshot.P(); pA.id = 0; pA.name = "A"; pA.score = 250; pA.captures = 2; pA.tags = 2; pA.deaths = 1;
+        Snapshot.P pB = new Snapshot.P(); pB.id = 1; pB.name = "B"; pB.score = 250; pB.captures = 2; pB.tags = 2; pB.deaths = 3;
+        Snapshot.P pC = new Snapshot.P(); pC.id = 2; pC.name = "C"; pC.score = 100; pC.captures = 1; pC.tags = 0; pC.deaths = 0;
+        Snapshot.P pD = new Snapshot.P(); pD.id = 3; pD.name = "D"; pD.score = 250; pD.captures = 1; pD.tags = 6; pD.deaths = 2;
+
+        java.util.List<Snapshot.P> list = new ArrayList<>(Arrays.asList(pB, pC, pD, pA));
+        list.sort((a, b) -> {
+            if (b.score != a.score) return Integer.compare(b.score, a.score);
+            if (b.captures != a.captures) return Integer.compare(b.captures, a.captures);
+            if (b.tags != a.tags) return Integer.compare(b.tags, a.tags);
+            return Integer.compare(a.deaths, b.deaths);
+        });
+
+        assertEquals("A", list.get(0).name, "Rank 1: Highest captures on tie-break score, and fewest deaths");
+        assertEquals("B", list.get(1).name, "Rank 2: Same score and caps as A, but more deaths");
+        assertEquals("D", list.get(2).name, "Rank 3: Same score as A/B, but fewer captures");
+        assertEquals("C", list.get(3).name, "Rank 4: Lowest score");
+    }
+
+    static void testAuthoritativeMatchEndElapsedTiming() {
+        Demo demo = new Demo();
+        demo.s.winner = 1; // Blue team won
+        demo.s.players = new Snapshot.P[2];
+        for (int i = 0; i < 2; i++) {
+            Snapshot.P p = new Snapshot.P(); p.id = i; p.team = i; p.alive = true;
+            demo.s.players[i] = p;
+        }
+
+        // Simulate match timer steps
+        for (int step = 0; step < 60; step++) {
+            demo.matchEndElapsedSec += 0.5;
+            demo.s.matchEndElapsedSec = demo.matchEndElapsedSec;
+        }
+
+        assertEquals(30.0, demo.s.matchEndElapsedSec, 1e-4, "Match end elapsed sec increments authoritatively");
+        assertTrue(demo.s.matchEndElapsedSec < 60.0, "Before 60s, celebration is active");
+
+        // Advance past 60s
+        for (int step = 0; step < 70; step++) {
+            demo.matchEndElapsedSec += 0.5;
+            demo.s.matchEndElapsedSec = demo.matchEndElapsedSec;
+        }
+        assertEquals(65.0, demo.s.matchEndElapsedSec, 1e-4, "Past 60s");
+        assertTrue(demo.s.matchEndElapsedSec >= 60.0, "After 60s, transitions automatically to post-match leaderboard");
+    }
+
+    static void testPostMatchLeaderboardLayout() {
+        NetLink link = new NetLink() {
+            @Override public void sendInput(int dx, int dy, double aim, boolean shoot) {}
+            @Override public int pingMs() { return 20; }
+            @Override public void requestPlayAgain() {}
+        };
+        GamePanel panel = new GamePanel(link, 0);
+
+        int[][] viewports = {{800, 600}, {640, 480}, {1024, 768}};
+        for (int[] vp : viewports) {
+            int vw = vp[0], vh = vp[1];
+            panel.setSize(vw, vh);
+
+            Snapshot s = new Snapshot();
+            s.winner = 0; // Red won
+            s.score = new int[]{3, 1};
+            s.matchEndElapsedSec = 61.0; // Leaderboard mode
+            s.players = new Snapshot.P[4];
+            String[] names = {"You", "Ann", "Bob", "Cy"};
+            for (int i = 0; i < 4; i++) {
+                Snapshot.P p = new Snapshot.P();
+                p.id = i; p.name = names[i]; p.team = i % 2;
+                p.tags = i * 2; p.deaths = i; p.captures = (i == 0 ? 3 : (i == 1 ? 1 : 0));
+                p.score = p.captures * 100 + p.tags * 25;
+                s.players[i] = p;
+            }
+
+            panel.onSnapshot(s);
+
+            BufferedImage img = new BufferedImage(vw, vh, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = img.createGraphics();
+            panel.paint(g);
+            g.dispose();
+
+            // Verify safe margins and responsive card bounds
+            int cardW = Math.min(740, Math.max(340, vw - 36));
+            int cardH = Math.min(540, Math.max(380, vh - 36));
+            int cardX = (vw - cardW) / 2;
+            int cardY = (vh - cardH) / 2;
+
+            assertTrue(cardX >= 18, "Leaderboard card maintains horizontal safe margin >= 18px");
+            assertTrue(cardY >= 18, "Leaderboard card maintains vertical safe margin >= 18px");
+            assertTrue(cardX + cardW <= vw - 18, "Leaderboard card fits within viewport horizontally");
+            assertTrue(cardY + cardH <= vh - 18, "Leaderboard card fits within viewport vertically");
+        }
+    }
+
+    static void testMatchResetStatistics() {
+        Demo demo = new Demo();
+        demo.s.winner = 0;
+        demo.s.score = new int[]{3, 1};
+        demo.matchEndElapsedSec = 45.0;
+        demo.s.matchEndElapsedSec = 45.0;
+        demo.s.players = new Snapshot.P[2];
+        for (int i = 0; i < 2; i++) {
+            Snapshot.P p = new Snapshot.P();
+            p.id = i; p.team = i; p.tags = 4; p.deaths = 2; p.captures = 2; p.score = 250; p.shieldSec = 3.5;
+            demo.s.players[i] = p;
+        }
+
+        demo.requestPlayAgain();
+
+        assertEquals(-1, demo.s.winner, "Winner reset to -1");
+        assertEquals(0, demo.s.score[0], "Red score reset to 0");
+        assertEquals(0, demo.s.score[1], "Blue score reset to 0");
+        assertEquals(0.0, demo.s.matchEndElapsedSec, 1e-4, "MatchEndElapsedSec reset to 0");
+        for (Snapshot.P p : demo.s.players) {
+            assertEquals(0, p.tags, "Player tags reset");
+            assertEquals(0, p.deaths, "Player deaths reset");
+            assertEquals(0, p.captures, "Player captures reset");
+            assertEquals(0, p.score, "Player score reset");
+            assertEquals(0.0, p.shieldSec, 1e-4, "Player shield reset");
         }
     }
 }

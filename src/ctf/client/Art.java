@@ -469,5 +469,97 @@ final class Art {
         g.fillRect((int) x - 1, (int) y - 1, 2, 2);
     }
 
+    /** Pixel-art regal golden victory crown with gemstone insets and specular shine. */
+    static void crown(Graphics2D g, double x, double y, Color gold, double size, double time) {
+        AffineTransform old = g.getTransform();
+        g.translate(x, y);
+        double s = size / 24.0;
+        g.scale(s, s);
+
+        // Crown silhouette / base
+        Path2D.Double p = new Path2D.Double();
+        p.moveTo(-12, 6);
+        p.lineTo(-14, -6);
+        p.lineTo(-6, -1);
+        p.lineTo(0, -9);
+        p.lineTo(6, -1);
+        p.lineTo(14, -6);
+        p.lineTo(12, 6);
+        p.closePath();
+
+        // Shadow
+        g.setColor(new Color(20, 10, 30, 200));
+        g.translate(1, 2);
+        g.fill(p);
+        g.translate(-1, -2);
+
+        // Gold gradient body
+        GradientPaint gp = new GradientPaint(0, -9, new Color(255, 235, 120), 0, 6, new Color(210, 140, 20));
+        g.setPaint(gp);
+        g.fill(p);
+
+        // Bevel highlight edge
+        g.setColor(new Color(255, 255, 220, 220));
+        g.setStroke(new BasicStroke(1.2f));
+        g.draw(p);
+
+        // Gemstone insets
+        g.setColor(new Color(255, 40, 90)); // Center Ruby
+        g.fillRect(-2, 0, 4, 4);
+        g.setColor(new Color(50, 220, 255)); // Side Sapphires
+        g.fillRect(-9, 1, 3, 3);
+        g.fillRect(6, 1, 3, 3);
+
+        // Top pearl points
+        g.setColor(Color.WHITE);
+        g.fillRect(-15, -8, 3, 3);
+        g.fillRect(-1, -11, 3, 3);
+        g.fillRect(13, -8, 3, 3);
+
+        starGlint(g, 0, -9, time * 2.0, 5);
+        g.setTransform(old);
+    }
+
+    /** Gold, Silver, Bronze rank medals for top performers. */
+    static void medalBadge(Graphics2D g, int x, int y, int rank) {
+        Color main, border, glowC;
+        String text = String.valueOf(rank);
+        if (rank == 1) {
+            main = new Color(245, 195, 35);
+            border = new Color(255, 240, 150);
+            glowC = new Color(255, 215, 0, 120);
+        } else if (rank == 2) {
+            main = new Color(185, 195, 210);
+            border = new Color(240, 245, 255);
+            glowC = new Color(200, 215, 235, 120);
+        } else if (rank == 3) {
+            main = new Color(200, 125, 60);
+            border = new Color(245, 185, 130);
+            glowC = new Color(205, 127, 50, 120);
+        } else {
+            main = new Color(60, 50, 80);
+            border = new Color(110, 100, 135);
+            glowC = new Color(0, 0, 0, 0);
+        }
+
+        // Circular medal disc
+        int d = 22;
+        g.setColor(glowC);
+        g.fillOval(x - 2, y - 2, d + 4, d + 4);
+        g.setColor(main);
+        g.fillOval(x, y, d, d);
+        g.setColor(border);
+        g.setStroke(new BasicStroke(1.5f));
+        g.drawOval(x, y, d, d);
+
+        // Text inside medal
+        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+        g.setColor(rank <= 3 ? new Color(20, 10, 30) : Color.WHITE);
+        FontMetrics fm = g.getFontMetrics();
+        int tx = x + (d - fm.stringWidth(text)) / 2;
+        int ty = y + (d + fm.getAscent() - 4) / 2;
+        g.drawString(text, tx, ty);
+    }
+
     private Art() {}
 }
