@@ -2,9 +2,9 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Compile CTF Client",
+            "label": "Compile everything",
             "type": "shell",
-            "command": "javac -d out src/ctf/client/*.java",
+            "command": "javac --release 17 -d out (Get-ChildItem src,test -Recurse -Filter *.java).FullName",
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -15,11 +15,18 @@
             "label": "Run CTF Client Demo",
             "type": "shell",
             "command": "java -cp out ctf.client.Demo",
-            "dependsOn": ["Compile CTF Client"],
+            "dependsOn": ["Compile everything"],
             "group": {
                 "kind": "test",
                 "isDefault": true
             },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run server (1 player to start)",
+            "type": "shell",
+            "command": "java -cp out ctf.server.GameServer 5000 1",
+            "dependsOn": ["Compile everything"],
             "problemMatcher": []
         }
     ]
