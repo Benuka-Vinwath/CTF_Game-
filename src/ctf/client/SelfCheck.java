@@ -1,5 +1,7 @@
 package ctf.client;
 
+import ctf.common.MapData;
+
 /** Run with: java -ea -cp out ctf.client.SelfCheck */
 public class SelfCheck {
     public static void main(String[] a) {

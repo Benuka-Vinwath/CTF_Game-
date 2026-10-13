@@ -1,4 +1,4 @@
-package ctf.client;
+package ctf.common;
 
 /** Shared map constants. Part A (server) must use the same values and the same resolve() for movement. */
 public final class MapData {

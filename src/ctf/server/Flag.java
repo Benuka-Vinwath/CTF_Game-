@@ -1,19 +1,19 @@
-/** A team's flag. Always in exactly one of three states. */
+package ctf.server;
+
+import ctf.common.MapData;
+
+/** A team's flag. Always in exactly one of three states; the ordinal is the number sent to clients. */
 public class Flag {
     public enum State { AT_BASE, CARRIED, DROPPED }
 
     public final int team;
-    public final double baseX, baseY;
-
     public State state = State.AT_BASE;
     public double x, y;
     public int carrierId = -1;   // valid only when CARRIED
-    public long droppedAt;       // valid only when DROPPED
+    public double droppedFor;    // seconds on the ground, valid only when DROPPED
 
-    public Flag(int team, double baseX, double baseY) {
+    public Flag(int team) {
         this.team = team;
-        this.baseX = baseX;
-        this.baseY = baseY;
         returnToBase();
     }
 
@@ -24,18 +24,18 @@ public class Flag {
         y = p.y;
     }
 
-    public void drop(double atX, double atY, long now) {
+    public void drop(double atX, double atY) {
         state = State.DROPPED;
         carrierId = -1;
         x = atX;
         y = atY;
-        droppedAt = now;
+        droppedFor = 0;
     }
 
     public void returnToBase() {
         state = State.AT_BASE;
         carrierId = -1;
-        x = baseX;
-        y = baseY;
+        x = MapData.BASES[team][0];
+        y = MapData.BASES[team][1];
     }
 }

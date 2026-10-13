@@ -1,4 +1,4 @@
-package ctf.client;
+package ctf.common;
 
 /** One server state update. Part C's Protocol.decode() should produce this; call GamePanel.onSnapshot(). */
 public final class Snapshot {
@@ -20,6 +20,8 @@ public final class Snapshot {
         public double x, y;                     // used when BASE or DROPPED
     }
 
+    public long tick;                           // server tick number; the client drops older/duplicate snapshots
+
     public P[] players = new P[0];
     public F[] flags = {new F(), new F()};      // index = team that owns the flag
     public double[][] bullets = new double[0][]; // x, y, team
@@ -29,5 +31,5 @@ public final class Snapshot {
     public double tentCooldown;                 // remaining cooldown before tent can be used again
     public double matchEndElapsedSec;          // authoritative seconds elapsed since match was won
 
-    long arrivedNs; // set by GamePanel on receipt, used for interpolation
+    public long arrivedNs; // set by GamePanel on receipt, used for interpolation
 }

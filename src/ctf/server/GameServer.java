@@ -1,3 +1,5 @@
+package ctf.server;
+
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -7,11 +9,11 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Entry point. Starts three kinds of threads:
- *   1. main thread     - TCP accept loop, one new ClientHandler thread per client
- *   2. udp-receiver    - receives input packets
- *   3. tick-loop       - runs the game 30 times per second and sends snapshots
+ *   1. main thread  - TCP accept loop, one new ClientHandler thread per client
+ *   2. udp-receiver - receives input packets
+ *   3. tick-loop    - runs the game 30 times per second and sends snapshots
  *
- * Usage: java GameServer [port] [minPlayers]   (defaults: 5000, 2)
+ * Usage: java ctf.server.GameServer [port] [minPlayers]   (defaults 5000 and 2)
  * TCP and UDP both use the same port number.
  */
 public class GameServer {
@@ -32,7 +34,7 @@ public class GameServer {
         ticker.scheduleAtFixedRate(() -> {
             try {
                 game.tick();
-                String snapshot = game.snapshot();
+                String snapshot = game.snapshotLine();
                 for (InetSocketAddress addr : game.udpTargets()) udp.send(snapshot, addr);
             } catch (Exception e) {
                 e.printStackTrace();   // never let one bad tick stop the loop
@@ -40,8 +42,8 @@ public class GameServer {
         }, 0, 1_000_000 / GameState.TICK_RATE, TimeUnit.MICROSECONDS);
 
         try (ServerSocket server = new ServerSocket(port)) {
-            System.out.println("CTF server on TCP+UDP port " + port
-                    + ", " + GameState.TICK_RATE + " ticks/s, starts with " + minPlayers + " ready players");
+            System.out.println("CTF server on TCP+UDP port " + port + ", " + GameState.TICK_RATE
+                    + " ticks/s, starts with " + minPlayers + " ready players");
             while (true) {
                 Socket s = server.accept();
                 s.setTcpNoDelay(true);   // send small messages immediately

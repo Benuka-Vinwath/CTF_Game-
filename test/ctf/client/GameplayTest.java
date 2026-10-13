@@ -1,5 +1,8 @@
 package ctf.client;
 
+import ctf.common.MapData;
+import ctf.common.Snapshot;
+
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.util.*;

@@ -1,17 +1,27 @@
-import java.io.*;
+package ctf.server;
+
+import ctf.common.Protocol;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 /**
- * One per connected client, running on its own thread (thread-per-client).
+ * One per connected client, on its own thread (thread-per-client).
  *
- * Reader thread (this Runnable): reads TCP lines from the client and calls GameState.
- * Writer thread: takes lines from the outbox queue and writes them to the socket.
- * The queue means game logic never waits on a slow client's network.
+ * The reader thread (this Runnable) reads TCP lines and calls GameState. A second, writer thread
+ * takes lines from an outbox queue and writes them to the socket, so game logic never waits on a
+ * slow client's network. A client that stops reading entirely (queue over MAX_QUEUE) is dropped.
+ *
+ * Commands (client to server): HELLO team name, READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text, AGAIN, BYE
  */
-public class ClientHandler implements Runnable {
+public class ClientHandler implements Runnable, Conn {
     private static final String CLOSE = "\u0000CLOSE";
     private static final int MAX_QUEUE = 1000;
 
@@ -27,9 +37,10 @@ public class ClientHandler implements Runnable {
     }
 
     /** Thread-safe and non-blocking: callable from any thread, including inside the game lock. */
+    @Override
     public void send(String line) {
         if (!open) return;
-        if (outbox.size() > MAX_QUEUE) { close(); return; }   // client stopped reading
+        if (outbox.size() > MAX_QUEUE) { close(); return; }
         outbox.offer(line);
     }
 
@@ -62,7 +73,7 @@ public class ClientHandler implements Runnable {
             if (!cmd.equals("HELLO")) { send("ERROR send HELLO <team> <name> first"); return true; }
             String[] a = arg.split(" ", 2);
             int team = parseInt(a[0], -1);
-            String name = a.length > 1 ? cleanName(a[1]) : "Player";
+            String name = Protocol.cleanName(a.length > 1 ? a[1] : "");
             player = game.addPlayer(name, team, this);
             if (player == null) { send("ERROR server full"); return false; }
             System.out.println("[tcp] " + name + " connected from " + socket.getRemoteSocketAddress());
@@ -73,8 +84,10 @@ public class ClientHandler implements Runnable {
             case "READY"   -> game.setReady(player.id, true);
             case "UNREADY" -> game.setReady(player.id, false);
             case "TEAM"    -> game.changeTeam(player.id, parseInt(arg, -1));
-            case "PING"    -> send("PONG " + arg);   // client measures round-trip time
+            case "PING"    -> send("PONG " + arg);                       // client measures the round trip
+            case "RTT"     -> game.setPing(player.id, parseInt(arg, 0)); // client reports it for the scoreboard
             case "CHAT"    -> game.chat(player.id, arg);
+            case "AGAIN"   -> game.wantAgain(player.id);
             case "BYE"     -> { return false; }
             default        -> send("ERROR unknown command " + cmd);
         }
@@ -95,7 +108,7 @@ public class ClientHandler implements Runnable {
             // socket closed
         } finally {
             close();
-            try { socket.close(); } catch (IOException ignored) {}
+            try { socket.close(); } catch (IOException ignored) { }
         }
     }
 
@@ -107,12 +120,6 @@ public class ClientHandler implements Runnable {
             System.out.println("[tcp] " + player.name + " disconnected");
             game.removePlayer(player.id);
         }
-    }
-
-    private static String cleanName(String s) {
-        String n = s.replaceAll("[^A-Za-z0-9_]", "_");
-        if (n.isEmpty()) n = "Player";
-        return n.length() > 12 ? n.substring(0, 12) : n;
     }
 
     private static int parseInt(String s, int fallback) {
