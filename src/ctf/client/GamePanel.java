@@ -87,6 +87,10 @@ public class GamePanel extends JPanel {
     private final Random rnd = new Random();
     private final BufferedImage bg = loadBackground();
     private final BufferedImage vignette = Art.vignette(MapData.W, MapData.H);
+    // When GameView draws the game bigger (full screen), the background and the edge shading are stretched
+    // once per window size and reused every frame; stretching them again each frame was far too slow.
+    private BufferedImage bgCache, vignetteCache;
+    private double cacheScale;
 
     public GamePanel(NetLink link, int myId) {
         this.link = link;
@@ -482,7 +486,10 @@ public class GamePanel extends JPanel {
         super.paintComponent(g0);
         Graphics2D g = (Graphics2D) g0.create();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+        // crisp pixel text at the normal size; smooth text once GameView draws the game bigger (full screen)
+        boolean enlarged = g.getTransform().getScaleX() > 1.25;
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+                enlarged ? RenderingHints.VALUE_TEXT_ANTIALIAS_ON : RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR); // crisp pixels
 
         if (last == null) {
@@ -536,7 +543,11 @@ public class GamePanel extends JPanel {
         }
         g.setTransform(base);
 
-        if (fx) g.drawImage(vignette, 0, 0, null);
+        if (fx) {
+            double sc = g.getTransform().getScaleX();
+            if (vignetteCache != null && sc > 1.25 && cacheScale == sc) g.drawImage(vignetteCache, 0, 0, MapData.W, MapData.H, null);
+            else g.drawImage(vignette, 0, 0, null);
+        }
         if (flash > 0) { g.setColor(new Color(255, 0, 0, (int) (110 * flash))); g.fillRect(0, 0, MapData.W, MapData.H); }
         drawHud(g, s);
         if (showBoard && s.winner < 0) drawBoard(g, s);
@@ -551,8 +562,41 @@ public class GamePanel extends JPanel {
         g.dispose();
     }
 
+    /** The character picture: the original pixel art at the normal size, a smooth version once drawn bigger. */
+    private static java.awt.image.BufferedImage sprite(Graphics2D g, int team, int frame, int worldW, int worldH) {
+        double sc = g.getTransform().getScaleX();
+        return sc > 1.25 ? Art.spriteScaled(team, frame, sc, worldW, worldH) : Art.sprite(team, frame);
+    }
+
+    private void ensureScaledCaches(double sc) {
+        if (bgCache != null && cacheScale == sc) return;
+        cacheScale = sc;
+        int bw = (int) Math.round((MapData.W + 2 * PAD) * sc), bh = (int) Math.round((MapData.H + 2 * PAD) * sc);
+        BufferedImage c = new BufferedImage(bw, bh, BufferedImage.TYPE_INT_RGB);
+        Graphics2D cg = c.createGraphics();
+        cg.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        cg.drawImage(bg, 0, 0, bw, bh, null);
+        cg.setColor(new Color(6, 6, 18, 120));   // the same darkening as below
+        cg.fillRect(0, 0, bw, bh);
+        cg.dispose();
+        bgCache = c;
+        vignetteCache = Art.vignette((int) Math.round(MapData.W * sc), (int) Math.round(MapData.H * sc));
+    }
+
     private void drawBackground(Graphics2D g) {
-        if (bg != null) g.drawImage(bg, -PAD, -PAD, null);
+        double sc = g.getTransform().getScaleX();
+        if (bg != null && sc > 1.25) {   // enlarged: use the picture that was stretched once for this size
+            ensureScaledCaches(sc);
+            g.drawImage(bgCache, -PAD, -PAD, MapData.W + 2 * PAD, MapData.H + 2 * PAD, null);
+            return;
+        }
+        if (bg != null) {
+            // the background is a photo-like picture: stretch it smoothly, not into big blocks (sprites stay pixel-crisp)
+            Object old = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(bg, -PAD, -PAD, null);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, old);
+        }
         g.setColor(new Color(6, 6, 18, 120)); // darken so players and bullets stay readable
         g.fillRect(-PAD, -PAD, MapData.W + 2 * PAD, MapData.H + 2 * PAD);
     }
@@ -651,7 +695,7 @@ public class GamePanel extends JPanel {
         if (!p.alive) {
             Composite old = g.getComposite();
             g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.7f));
-            g.drawImage(Art.sprite(p.team, 3), (int) px - 12, (int) py + 2, 24, 10, null);
+            g.drawImage(sprite(g, p.team, 3, 24, 10), (int) px - 12, (int) py + 2, 24, 10, null);
             g.setComposite(old);
             return;
         }
@@ -665,7 +709,7 @@ public class GamePanel extends JPanel {
         double bob = moving ? ((phase & 1) == 0 ? 0 : -2) : Math.sin(time * 3 + p.id) * 1.2;
         boolean left = Math.cos(aim) < 0;
         int x0 = (int) px - 12, y0 = (int) (py - 20 + bob);
-        g.drawImage(Art.sprite(p.team, frame), left ? x0 + 24 : x0, y0, left ? -24 : 24, 32, null);
+        g.drawImage(sprite(g, p.team, frame, 24, 32), left ? x0 + 24 : x0, y0, left ? -24 : 24, 32, null);
 
         // Body energy cycle / magical invulnerability ring
         if (p.shieldSec > 0) {

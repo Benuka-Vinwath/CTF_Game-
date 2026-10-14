@@ -75,8 +75,90 @@ final class Art {
     static void glow(Graphics2D g, Color c, double x, double y, int r, float alpha) {
         Composite old = g.getComposite();
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, Math.max(0f, Math.min(1f, alpha))));
-        g.drawImage(glow(c, r), (int) x - r, (int) y - r, null);
+        double sc = g.getTransform().getScaleX();
+        if (sc > 1.25) {   // drawn bigger (full screen): use a light made at the real size, not an enlarged small one
+            g.drawImage(glowScaled(c, r, sc), (int) x - r, (int) y - r, 2 * r, 2 * r, null);
+        } else {
+            g.drawImage(glow(c, r), (int) x - r, (int) y - r, null);
+        }
         g.setComposite(old);
+    }
+
+    // ---- smooth versions for big screens. The originals stay for the normal size. -------------------
+
+    private static final Map<String, BufferedImage> SCALED = new HashMap<>();
+
+    /** The same radial light, drawn at (2r * scale) pixels so it is smooth instead of an enlarged small bitmap. */
+    private static synchronized BufferedImage glowScaled(Color c, int r, double scale) {
+        int size = Math.max(2, (int) Math.round(2 * r * scale));
+        return SCALED.computeIfAbsent("g:" + c.getRGB() + ":" + r + ":" + size, k -> {
+            BufferedImage im = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = im.createGraphics();
+            g.setPaint(new RadialGradientPaint(new Point2D.Float(size / 2f, size / 2f), size / 2f, new float[]{0f, 1f},
+                new Color[]{new Color(c.getRed(), c.getGreen(), c.getBlue(), 255), new Color(c.getRed(), c.getGreen(), c.getBlue(), 0)}));
+            g.fillRect(0, 0, size, size);
+            g.dispose();
+            return im;
+        });
+    }
+
+    /**
+     * Scale2x (also called AdvMAME2x): doubles a pixel-art picture and, where two neighbouring pixels agree
+     * on a diagonal, fills the new corner with their colour instead of a block. This rounds off the
+     * stair-steps without blurring the flat colours. Pixels outside the picture count as transparent.
+     */
+    private static BufferedImage scale2x(BufferedImage in) {
+        int w = in.getWidth(), h = in.getHeight();
+        int[] px = new int[w * h];
+        in.getRGB(0, 0, w, h, px, 0, w);
+        for (int i = 0; i < px.length; i++) if ((px[i] >>> 24) == 0) px[i] = 0;   // all transparent pixels are equal
+        int[] out = new int[w * 2 * h * 2];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int p = px[y * w + x];
+                int a = y > 0 ? px[(y - 1) * w + x] : 0;        // above
+                int d = y < h - 1 ? px[(y + 1) * w + x] : 0;    // below
+                int c = x > 0 ? px[y * w + x - 1] : 0;          // left
+                int b = x < w - 1 ? px[y * w + x + 1] : 0;      // right
+                int e0 = (c == a && c != d && a != b) ? a : p;
+                int e1 = (a == b && a != c && b != d) ? b : p;
+                int e2 = (d == c && d != b && c != a) ? c : p;
+                int e3 = (b == d && b != a && d != c) ? d : p;
+                int o = (y * 2) * (w * 2) + x * 2;
+                out[o] = e0;
+                out[o + 1] = e1;
+                out[o + w * 2] = e2;
+                out[o + w * 2 + 1] = e3;
+            }
+        }
+        BufferedImage im = new BufferedImage(w * 2, h * 2, BufferedImage.TYPE_INT_ARGB);
+        im.setRGB(0, 0, w * 2, h * 2, out, 0, w * 2);
+        return im;
+    }
+
+    /**
+     * A character sprite for a big screen, made once per size: the 12-pixel picture is blown up 8x with
+     * Scale2x (so diagonal edges are rounded, not stair-stepped) and then smoothed down to the exact size
+     * needed, which gives anti-aliased edges instead of blocks of uneven width. worldW and worldH are the
+     * size it is drawn at.
+     */
+    static synchronized BufferedImage spriteScaled(int team, int frame, double scale, int worldW, int worldH) {
+        int w = Math.max(1, (int) Math.round(worldW * scale)), h = Math.max(1, (int) Math.round(worldH * scale));
+        return SCALED.computeIfAbsent("s:" + team + ":" + frame + ":" + w + "x" + h, k -> {
+            BufferedImage big = SPRITES[team][frame];
+            for (int pass = 0; pass < 3; pass++) big = scale2x(big);   // 8x, with the stair-steps on diagonals rounded off
+            BufferedImage half = new BufferedImage(w * 2, h * 2, BufferedImage.TYPE_INT_ARGB_PRE);
+            Graphics2D g = half.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(big, 0, 0, w * 2, h * 2, null);
+            g.dispose();
+            BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB_PRE);
+            g = out.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(half, 0, 0, w, h, null);
+            g.dispose();
+            return out;
+        });
     }
 
     static BufferedImage vignette(int w, int h) {
