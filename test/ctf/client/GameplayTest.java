@@ -42,6 +42,7 @@ public class GameplayTest {
         runTest("Authoritative Match End Elapsed Timing & 60s Auto Transition", GameplayTest::testAuthoritativeMatchEndElapsedTiming);
         runTest("Post-Match Leaderboard Layout & Team Statistics Aggregation", GameplayTest::testPostMatchLeaderboardLayout);
         runTest("Match Reset Cleanly Clears All Match Statistics", GameplayTest::testMatchResetStatistics);
+        runTest("Wide/Tall Windows Are Filled With Scenery (No Black Bars)", GameplayTest::testViewFillsWindow);
 
         System.out.println("\n=== Test Results Summary ===");
         System.out.println("Passed: " + passed + " | Failed: " + failed);
@@ -462,6 +463,38 @@ public class GameplayTest {
 
         assertTrue(!bluePlayer.alive, "Player must be eliminated after shield expiration");
         assertEquals(1, demo.s.players[0].tags, "Shooter gets credit for elimination after shield expires");
+    }
+
+    static void testViewFillsWindow() {
+        NetLink link = new NetLink() {
+            @Override public void sendInput(int dx, int dy, double aim, boolean shoot) {}
+            @Override public int pingMs() { return 20; }
+            @Override public void requestPlayAgain() {}
+        };
+        GamePanel panel = new GamePanel(link, 0);
+        panel.setSize(MapData.W, MapData.H); // GameView does the same: the panel is never shown, only painted
+        Snapshot s = new Snapshot();
+        Snapshot.P p0 = new Snapshot.P(); p0.id = 0; p0.name = "You"; p0.team = 0; p0.x = 100; p0.y = 100;
+        s.players = new Snapshot.P[]{p0};
+        panel.onSnapshot(s);
+        // 16:9, 21:9 and a tall window: the visible world rectangle is wider/taller than the 800x600 arena
+        double[][] views = {{-166, -16, 1132, 632}, {-420, -16, 1640, 632}, {-16, -150, 832, 932}};
+        for (double[] v : views) {
+            int w = (int) v[2], h = (int) v[3];
+            BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = img.createGraphics();
+            g.translate(-v[0], -v[1]);
+            g.setClip(new java.awt.geom.Rectangle2D.Double(v[0], v[1], v[2], v[3]));
+            panel.setView(v[0], v[1], v[2], v[3]);
+            panel.paint(g);
+            g.dispose();
+            int dark = 0, n = 0;
+            for (int y = h / 4; y < h; y += 40) for (int x = 0; x < w; x += 40) { // every sampled pixel must be painted scenery, not pure black
+                n++;
+                if ((img.getRGB(x, y) & 0xFFFFFF) == 0) dark++;
+            }
+            assertTrue(dark == 0, "no pure-black bars in a " + w + "x" + h + " world view (" + dark + "/" + n + ")");
+        }
     }
 
     static void testResponsiveVictoryLayout() {
