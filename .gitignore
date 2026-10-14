@@ -3,6 +3,9 @@ out/
 bin/
 *.class
 
+# Error log written by the game client when something fails
+ctf-client-error.log
+
 # OS artifacts
 .DS_Store
 Thumbs.db

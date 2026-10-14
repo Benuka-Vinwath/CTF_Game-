@@ -106,8 +106,28 @@ public class GameView extends JComponent {
                 e.getClickCount(), e.isPopupTrigger(), e.getButton());
     }
 
+    private boolean errorShown;
+
     @Override
     protected void paintComponent(Graphics g0) {
+        try {
+            paintGame(g0);
+        } catch (Throwable t) {   // never leave a silent blank window: say what went wrong, on screen and in a log file
+            if (!errorShown) {
+                errorShown = true;
+                Main.logError("Drawing the game failed", t);
+            }
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setColor(Color.BLACK);
+            g.fillRect(0, 0, getWidth(), getHeight());
+            g.setColor(Color.WHITE);
+            g.drawString("Drawing error: " + t, 20, 30);
+            g.drawString("Details are in ctf-client-error.log (please send it)", 20, 52);
+            g.dispose();
+        }
+    }
+
+    private void paintGame(Graphics g0) {
         // The game is drawn into a plain image whose size is the window's REAL pixel size (a 150% scaled
         // screen has more pixels than getWidth() says), with the world scaled up while drawing, so lines,
         // text and effects are sharp instead of an enlarged small picture. Then the image is copied 1:1.
