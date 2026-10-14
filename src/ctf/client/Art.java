@@ -45,7 +45,6 @@ final class Art {
     /** [team][0 idle, 1 run A, 2 run B, 3 fallen] */
     private static final BufferedImage[][] SPRITES = new BufferedImage[2][4];
     private static final Map<String, BufferedImage> GLOWS = new HashMap<>();
-    private static final Map<Integer, Font> FONTS = new HashMap<>();
 
     static {
         for (int t = 0; t < 2; t++) for (int f = 0; f < 3; f++) SPRITES[t][f] = build(t, f);
@@ -71,8 +70,6 @@ final class Art {
         }
         return im;
     }
-
-    static BufferedImage sprite(int team, int frame) { return SPRITES[team][frame]; }
 
     /** Soft radial light, cached per color and radius; draw it with an alpha composite. */
     static BufferedImage glow(Color c, int r) {
@@ -118,60 +115,13 @@ final class Art {
     }
 
     /**
-     * Scale2x (also called AdvMAME2x): doubles a pixel-art picture and, where two neighbouring pixels agree
-     * on a diagonal, fills the new corner with their colour instead of a block. This rounds off the
-     * stair-steps without blurring the flat colours. Pixels outside the picture count as transparent.
+     * Pixel-art fighter at a whole number of screen pixels per sprite pixel (nearest neighbour), so every sprite
+     * pixel is a crisp square of the same size. Made once per size and meant to be copied 1:1 to the screen.
      */
-    private static BufferedImage scale2x(BufferedImage in) {
-        int w = in.getWidth(), h = in.getHeight();
-        int[] px = new int[w * h];
-        in.getRGB(0, 0, w, h, px, 0, w);
-        for (int i = 0; i < px.length; i++) if ((px[i] >>> 24) == 0) px[i] = 0;   // all transparent pixels are equal
-        int[] out = new int[w * 2 * h * 2];
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                int p = px[y * w + x];
-                int a = y > 0 ? px[(y - 1) * w + x] : 0;        // above
-                int d = y < h - 1 ? px[(y + 1) * w + x] : 0;    // below
-                int c = x > 0 ? px[y * w + x - 1] : 0;          // left
-                int b = x < w - 1 ? px[y * w + x + 1] : 0;      // right
-                int e0 = (c == a && c != d && a != b) ? a : p;
-                int e1 = (a == b && a != c && b != d) ? b : p;
-                int e2 = (d == c && d != b && c != a) ? c : p;
-                int e3 = (b == d && b != a && d != c) ? d : p;
-                int o = (y * 2) * (w * 2) + x * 2;
-                out[o] = e0;
-                out[o + 1] = e1;
-                out[o + w * 2] = e2;
-                out[o + w * 2 + 1] = e3;
-            }
-        }
-        BufferedImage im = new BufferedImage(w * 2, h * 2, BufferedImage.TYPE_INT_ARGB);
-        im.setRGB(0, 0, w * 2, h * 2, out, 0, w * 2);
-        return im;
-    }
-
-    /**
-     * A character sprite for a big screen, made once per size: the 12-pixel picture is blown up 8x with
-     * Scale2x (so diagonal edges are rounded, not stair-stepped) and then smoothed down to the exact size
-     * needed, which gives anti-aliased edges instead of blocks of uneven width. worldW and worldH are the
-     * size it is drawn at.
-     */
-    static synchronized BufferedImage spriteScaled(int team, int frame, double scale, int worldW, int worldH) {
-        int w = Math.max(1, (int) Math.round(worldW * scale)), h = Math.max(1, (int) Math.round(worldH * scale));
-        return SCALED.computeIfAbsent("s:" + team + ":" + frame + ":" + w + "x" + h, k -> {
-            BufferedImage big = SPRITES[team][frame];
-            for (int pass = 0; pass < 3; pass++) big = scale2x(big);   // 8x, with the stair-steps on diagonals rounded off
-            BufferedImage half = new BufferedImage(w * 2, h * 2, BufferedImage.TYPE_INT_ARGB_PRE);
-            Graphics2D g = half.createGraphics();
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(big, 0, 0, w * 2, h * 2, null);
-            g.dispose();
-            BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB_PRE);
-            g = out.createGraphics();
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(half, 0, 0, w, h, null);
-            g.dispose();
+    static synchronized BufferedImage spriteCrisp(int team, int frame, int k) {
+        return SCALED.computeIfAbsent("p:" + team + ":" + frame + ":" + k, key -> {
+            BufferedImage src = SPRITES[team][frame], out = new BufferedImage(src.getWidth() * k, src.getHeight() * k, BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < out.getHeight(); y++) for (int x = 0; x < out.getWidth(); x++) out.setRGB(x, y, src.getRGB(x / k, y / k));
             return out;
         });
     }
@@ -240,11 +190,11 @@ final class Art {
         g.draw(new Ellipse2D.Double(x - 18, y + 8, 36, 15));
     }
 
-    /** Waving banner on a pole; (x, y) is the middle of the pole. Drawn 1.25x so it reads next to the larger fighters. */
+    /** Waving banner on a pole; (x, y) is the middle of the pole. Drawn 1.5x so it reads next to the larger fighters. */
     static void flag(Graphics2D g, double x, double y, int team, double t) {
         AffineTransform keep = g.getTransform();
         g.translate(x, y);
-        g.scale(1.25, 1.25);
+        g.scale(1.5, 1.5);
         g.setColor(new Color(190, 185, 200));
         g.fill(new Rectangle2D.Double(-1, -16, 2, 30));
         g.setColor(new Color(240, 235, 250));
@@ -324,9 +274,9 @@ final class Art {
     /** Vertical light column rising from (x, y), brightest at the bottom. */
     static void beam(Graphics2D g, double x, double y, Color c, float a) {
         Paint old = g.getPaint();
-        g.setPaint(new GradientPaint((float) x, (float) (y - 150), new Color(c.getRed(), c.getGreen(), c.getBlue(), 0),
+        g.setPaint(new GradientPaint((float) x, (float) (y - 210), new Color(c.getRed(), c.getGreen(), c.getBlue(), 0),
             (float) x, (float) y, new Color(c.getRed(), c.getGreen(), c.getBlue(), (int) (255 * Math.max(0, Math.min(1, a))))));
-        g.fill(new Rectangle2D.Double(x - 7, y - 150, 14, 150));
+        g.fill(new Rectangle2D.Double(x - 12, y - 210, 24, 210));
         g.setPaint(old);
     }
 
@@ -341,9 +291,8 @@ final class Art {
         g.drawRoundRect(x + 3, y + 3, w - 6, h - 6, 5, 5);
     }
 
-    private static final Map<Integer, Font> TITLES = new HashMap<>();
     /** Display face for scores and announcements. */
-    static Font title(int size) { return TITLES.computeIfAbsent(size, s -> new Font(Font.SERIF, Font.BOLD, s)); }
+    static Font title(int size) { return Type.display(size); }
 
     /** Rectangle with all four corners cut off. */
     static Path2D.Double chamfer(double x, double y, double w, double h, double c) {
@@ -408,17 +357,19 @@ final class Art {
         text(g, s, (int) (cx - w / 2 + 6), (int) y, c);
     }
 
-    static Font font(int size) { return FONTS.computeIfAbsent(size, s -> new Font(Font.MONOSPACED, Font.BOLD, s)); }
+    /** Bold UI face. Sizes keep the old numbering; the proportional face is a little smaller per point, hence the 1.15. */
+    static Font font(int size) { return Type.ui(size * 1.15f, true); }
 
-    static void text(Graphics2D g, String s, int x, int y, Color c) {
-        g.setColor(new Color(0, 0, 0, 200));
-        g.drawString(s, x + 1, y + 1);
+    /** Fractional positions are kept (FRACTIONALMETRICS), so spacing stays even at any zoom. */
+    static void text(Graphics2D g, String s, double x, double y, Color c) {
+        g.setColor(new Color(0, 0, 0, 170));
+        g.drawString(s, (float) (x + 0.8), (float) (y + 0.9));
         g.setColor(c);
-        g.drawString(s, x, y);
+        g.drawString(s, (float) x, (float) y);
     }
 
-    static void textCenter(Graphics2D g, String s, int x, int w, int y, Color c) {
-        text(g, s, x + (w - g.getFontMetrics().stringWidth(s)) / 2, y, c);
+    static void textCenter(Graphics2D g, String s, double x, double w, double y, Color c) {
+        text(g, s, x + (w - g.getFontMetrics().getStringBounds(s, g).getWidth()) / 2, y, c);
     }
 
     /** Protective magical tent / sanctuary on the ground. */
@@ -543,9 +494,9 @@ final class Art {
         Composite oldComp = g.getComposite();
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
 
-        int r = 28;
-        glow(g, new Color(160, 50, 255), px, py, 44, 0.45f * alpha);
-        glow(g, new Color(70, 230, 255), px, py, 30, 0.35f * alpha);
+        int r = 34;
+        glow(g, new Color(160, 50, 255), px, py, 54, 0.45f * alpha);
+        glow(g, new Color(70, 230, 255), px, py, 38, 0.35f * alpha);
 
         Stroke oldSt = g.getStroke();
         g.setColor(new Color(130, 45, 220, 90));
@@ -807,7 +758,7 @@ final class Art {
         g.drawOval(x, y, d, d);
 
         // Text inside medal
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+        g.setFont(Type.ui(12, true));
         g.setColor(rank <= 3 ? new Color(20, 10, 30) : Color.WHITE);
         FontMetrics fm = g.getFontMetrics();
         int tx = x + (d - fm.stringWidth(text)) / 2;

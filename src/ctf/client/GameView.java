@@ -112,16 +112,17 @@ public class GameView extends JComponent {
 
     @Override
     protected void paintComponent(Graphics g0) {
-        // The game is drawn into a plain image whose size is the window's REAL pixel size (a 150% scaled
-        // screen has more pixels than getWidth() says), with the world scaled up while drawing, so lines,
-        // text and effects are sharp instead of an enlarged small picture. Then the image is copied 1:1.
-        // (Painting GamePanel straight onto the window's graphics broke on scaled screens: stretched stripes.)
+        // Two passes, both at the screen's REAL pixel size (a 150% scaled screen has more pixels than getWidth()):
+        //  1. the battlefield is drawn into an image with one pixel per screen pixel and copied 1:1;
+        //  2. all text and UI (GamePanel.paintOverlay) is then drawn straight onto the window at native resolution,
+        //     so glyphs are rasterised once and never resampled, even when pass 1 had to drop to a lower resolution.
         java.awt.GraphicsConfiguration gc = getGraphicsConfiguration();
         double dpi = gc == null ? 1.0 : gc.getDefaultTransform().getScaleX();
         long started = System.nanoTime();
         double s = scale() * dpi;                       // real screen pixels per world pixel
-        double rs = Math.min(s, renderCap);             // big screens: draw smaller, then enlarge (keeps it fast)
+        double rs = Math.min(s, renderCap);             // only when the computer is slow: draw the world smaller, then enlarge
         double vw = getWidth() / scale(), vh = getHeight() / scale(), vx0 = worldX0(), vy0 = worldY0();
+        int pw = (int) Math.round(getWidth() * dpi), ph = (int) Math.round(getHeight() * dpi);
         int rw = Math.max(1, (int) Math.round(vw * rs));
         int rh = Math.max(1, (int) Math.round(vh * rs));
         if (frame == null || frame.getWidth() != rw || frame.getHeight() != rh) {
@@ -132,13 +133,22 @@ public class GameView extends JComponent {
         fg.translate(-vx0, -vy0);
         fg.setClip(new java.awt.geom.Rectangle2D.Double(vx0, vy0, vw, vh));
         game.setView(vx0, vy0, vw, vh);
-        game.paint(fg);
+        game.paintWorld(fg);
         fg.dispose();
 
         Graphics2D g = (Graphics2D) g0.create();
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        if (Math.abs(rw - getWidth() * dpi) < 1.5 && Math.abs(rh - getHeight() * dpi) < 1.5 && dpi == 1.0) g.drawImage(frame, 0, 0, null); // 1:1 copy is much cheaper
-        else g.drawImage(frame, 0, 0, getWidth(), getHeight(), null);   // fills the whole window: no bars
+        java.awt.geom.AffineTransform origin = g.getTransform();   // where this component starts, in device pixels
+        g.setTransform(new java.awt.geom.AffineTransform());
+        g.translate(origin.getTranslateX(), origin.getTranslateY());
+        if (rw == pw && rh == ph) g.drawImage(frame, 0, 0, null);
+        else {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(frame, 0, 0, pw, ph, null);                // fills the whole window: no bars
+        }
+        g.scale(pw / vw, ph / vh);
+        g.translate(-vx0, -vy0);
+        g.clip(new java.awt.geom.Rectangle2D.Double(vx0, vy0, vw, vh));
+        game.paintOverlay(g);
         g.dispose();
 
         // Adapt to slow computers: if drawing takes too long, draw at a slightly smaller size from now on.

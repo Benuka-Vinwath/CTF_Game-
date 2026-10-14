@@ -44,7 +44,11 @@ final class Scenery {
     void drawBack(Graphics2D g, double vx0, double vy0, double vw, double vh, double camX, double camY, double t, boolean fx) {
         ensure(g.getTransform().getScaleX(), vx0, vy0, vw, vh);
         blit(g, back, 0, 0);
-        if (fx) blitStrips(g, far, -camX * 14, -camY * 8);
+        if (fx) {
+            double pulse = 0.5 + 0.5 * Math.sin(t * 1.6);
+            Art.glow(g, new Color(150, 100, 255), MapData.W / 2.0, MapData.H / 2.0, 190, (float) (0.10 + 0.07 * pulse));
+            blitStrips(g, far, -camX * 14, -camY * 8);
+        }
         for (double[] b : braziers) // fires outside the window are skipped
             if (b[0] > vx0 - 60 && b[0] < vx0 + vw + 60 && b[1] > vy0 - 80 && b[1] < vy0 + vh + 40) Art.torchFlame(g, b[0], b[1], t, 1.3, fx);
     }
@@ -139,13 +143,14 @@ final class Scenery {
         g.setPaint(new GradientPaint(0, (float) ry, new Color(4, 6, 28, 170), 0, (float) (ry + rh), new Color(22, 10, 36, 120)));
         g.fill(region);
 
-        flagstones(g, region, 7, 46, new Color(34, 32, 58), 118);                                 // courtyard outside the arena
+        flagstones(g, region, 7, 46, new Color(34, 32, 58), 96);                                 // courtyard outside the arena
         Rectangle2D arena = new Rectangle2D.Double(0, 0, MapData.W, MapData.H);
         flagstones(g, arena, 11, 34, new Color(34, 32, 56), 214);                                 // the playfield floor
         g.setPaint(new RadialGradientPaint(new Point2D.Double(MapData.W / 2.0, MapData.H / 2.0), (float) (MapData.W * 0.66),
             new float[]{0f, 1f}, new Color[]{new Color(130, 120, 210, 30), new Color(0, 0, 12, 80)}));
         g.fill(arena);
 
+        floorDetails(g);
         for (double[] b : MapData.BASES) { // carved rune circle under each home base
             g.setColor(new Color(255, 255, 255, 16));
             g.setStroke(new BasicStroke(2f));
@@ -157,6 +162,89 @@ final class Scenery {
         pillars(g);
         g.dispose();
         return im;
+    }
+
+    /** Team colour washes, an engraved arena emblem, ember-lit cracks, rubble and crystals: what makes the floor a place. */
+    private void floorDetails(Graphics2D g) {
+        final int W = MapData.W, H = MapData.H;
+        final double cx = W / 2.0, cy = H / 2.0;
+        Rectangle2D arena = new Rectangle2D.Double(0, 0, W, H);
+        g.setPaint(new GradientPaint(0, 0, new Color(255, 80, 40, 78), (float) (W * 0.38), 0, new Color(255, 80, 40, 0)));
+        g.fill(arena);
+        g.setPaint(new GradientPaint(W, 0, new Color(40, 190, 255, 72), (float) (W * 0.62), 0, new Color(40, 190, 255, 0)));
+        g.fill(arena);
+        for (double[] w : MapData.WALLS) { // warm light pooled around every brazier
+            g.setPaint(new RadialGradientPaint(new Point2D.Double(w[0] + w[2] / 2, w[1] + w[3] / 2), (float) (Math.max(w[2], w[3]) / 2 + 80),
+                new float[]{0f, 1f}, new Color[]{new Color(255, 140, 50, 52), new Color(255, 140, 50, 0)}));
+            g.fill(arena);
+        }
+
+        // engraved emblem at the heart of the arena
+        Color rune = new Color(165, 125, 255, 66);
+        g.setStroke(new BasicStroke(1.8f));
+        g.setColor(rune);
+        for (double r : new double[]{150, 132, 62}) g.draw(new Ellipse2D.Double(cx - r, cy - r, r * 2, r * 2));
+        g.setStroke(new BasicStroke(1.2f));
+        for (int i = 0; i < 48; i++) {
+            double a = i * Math.PI / 24, r1 = 132, r2 = i % 6 == 0 ? 158 : 146;
+            g.draw(new Line2D.Double(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1, cx + Math.cos(a) * r2, cy + Math.sin(a) * r2));
+        }
+        g.setColor(new Color(165, 125, 255, 48));
+        for (int i = 0; i < 8; i++) { // {8/3} star
+            double a1 = i * Math.PI / 4, a2 = (i + 3) * Math.PI / 4;
+            g.draw(new Line2D.Double(cx + Math.cos(a1) * 120, cy + Math.sin(a1) * 120, cx + Math.cos(a2) * 120, cy + Math.sin(a2) * 120));
+        }
+        g.setStroke(new BasicStroke(2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{10, 9}, 0));
+        g.setColor(new Color(255, 255, 255, 30)); // engraved lanes from each base towards the centre
+        g.draw(new Line2D.Double(135, cy, cx - 170, cy));
+        g.draw(new Line2D.Double(cx + 170, cy, W - 135, cy));
+        g.setStroke(new BasicStroke(1f));
+
+        Random r = new Random(77);
+        for (int i = 0; i < 13; i++) { // cracks glowing with ember light
+            double x = 40 + r.nextDouble() * (W - 80), y = 40 + r.nextDouble() * (H - 80), a = r.nextDouble() * 6.28;
+            if (MapData.nearSolid(x, y, 16) || nearBase(x, y, 40)) continue;
+            Path2D.Double p = new Path2D.Double();
+            p.moveTo(x, y);
+            for (int k = 0; k < 4; k++) { a += (r.nextDouble() - 0.5) * 1.0; x += Math.cos(a) * (12 + r.nextInt(14)); y += Math.sin(a) * (12 + r.nextInt(14)); p.lineTo(x, y); }
+            g.setStroke(new BasicStroke(6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.setColor(new Color(255, 110, 30, 22)); g.draw(p);
+            g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.setColor(new Color(255, 140, 45, 95)); g.draw(p);
+            g.setStroke(new BasicStroke(0.7f)); g.setColor(new Color(255, 225, 150, 170)); g.draw(p);
+        }
+        g.setStroke(new BasicStroke(1f));
+        for (int i = 0; i < 40; i++) { // fallen stone
+            double x = 30 + r.nextDouble() * (W - 60), y = 30 + r.nextDouble() * (H - 60), rad = 4 + r.nextDouble() * 8;
+            if (MapData.nearSolid(x, y, 14) || nearBase(x, y, 50)) continue;
+            Path2D.Double p = new Path2D.Double();
+            for (int k = 0; k < 7; k++) { double a = k * Math.PI * 2 / 7, rr = rad * (0.65 + r.nextDouble() * 0.5); if (k == 0) p.moveTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.8); else p.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.8); }
+            p.closePath();
+            g.setColor(new Color(0, 0, 0, 80));
+            g.fill(AffineTransform.getTranslateInstance(2.5, 3.5).createTransformedShape(p));
+            g.setColor(new Color(66, 60, 90));
+            g.fill(p);
+            g.setColor(new Color(150, 145, 195, 110));
+            g.draw(p);
+        }
+        for (int i = 0; i < 8; i++) { // glowing crystal clusters hugging the lower parapet
+            double x = 60 + r.nextDouble() * (W - 120), y = H - 20 - r.nextInt(8);
+            if (nearBase(x, y, 70)) continue;
+            Color c = r.nextBoolean() ? new Color(90, 220, 255) : new Color(190, 110, 255);
+            g.setPaint(new RadialGradientPaint(new Point2D.Double(x, y), 26, new float[]{0f, 1f}, new Color[]{new Color(c.getRed(), c.getGreen(), c.getBlue(), 90), new Color(c.getRed(), c.getGreen(), c.getBlue(), 0)}));
+            g.fill(new Ellipse2D.Double(x - 26, y - 26, 52, 52));
+            for (int k = 0; k < 3; k++) {
+                double sx = x + (k - 1) * 10, h = 16 + r.nextInt(12);
+                Path2D.Double d = new Path2D.Double();
+                d.moveTo(sx, y - h); d.lineTo(sx + 6, y); d.lineTo(sx, y + 5); d.lineTo(sx - 6, y); d.closePath();
+                g.setColor(new Color(14, 10, 30)); g.fill(d);
+                g.setColor(c); g.fill(new Rectangle2D.Double(sx - 1.8, y - h * 0.7, 3.6, h * 0.75));
+                g.setColor(new Color(255, 255, 255, 150)); g.draw(d);
+            }
+        }
+    }
+
+    private static boolean nearBase(double x, double y, double m) {
+        for (double[] b : MapData.BASES) if (Math.hypot(x - b[0], y - b[1]) < b[2] + m) return true;
+        return false;
     }
 
     private static int cl(int v) { return Math.max(0, Math.min(255, v)); }
@@ -240,6 +328,14 @@ final class Scenery {
         g.setColor(new Color(0, 0, 0, 190));
         g.draw(new Rectangle2D.Double(-T, -T, W + 2 * T, H + 2 * T));
 
+        for (double x : new double[]{250, 560, 870}) { // braziers mounted on the parapet
+            braziers.add(new double[]{x, -8});
+            braziers.add(new double[]{x, H + 20});
+        }
+        for (double y : new double[]{150, 480}) {
+            braziers.add(new double[]{-11, y});
+            braziers.add(new double[]{W + 11, y});
+        }
         for (int c = 0; c < 4; c++) { // corner towers with a brazier on top
             double tx = (c % 2 == 0 ? -T - 20 : W - 12), ty = (c < 2 ? -T - 20 : H - 12);
             g.setColor(new Color(0, 0, 0, 90));

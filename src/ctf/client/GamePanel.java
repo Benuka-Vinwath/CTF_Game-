@@ -21,7 +21,7 @@ public class GamePanel extends JPanel {
     static final Color[] TEAM = {new Color(235, 70, 70), new Color(70, 150, 255)};
     static final long INTERP_DELAY_NS = 100_000_000L; // render 100ms in the past (~3 snapshots)
     static final double SHOOT_COOLDOWN = 0.25;
-    static final int MAX_PARTICLES = 800;
+    static final int MAX_PARTICLES = 1000;
 
     private static final class Particle {
         double x, y, vx, vy, life, max; Color c; int size = 4; boolean soft;
@@ -49,7 +49,7 @@ public class GamePanel extends JPanel {
     private final List<Particle> parts = new ArrayList<>();
     private final List<double[]> beams = new ArrayList<>();      // {x, y, team, life}
     private final List<Object[]> feed = new ArrayList<>();       // {text, expiryNs}
-    private final double[][] embers = new double[40][4];         // x, y, speed, phase
+    private final double[][] embers = new double[72][4];         // x, y, speed, phase
     private final List<FireworkRocket> rockets = new ArrayList<>();
     private final List<FireworkSpark> sparks = new ArrayList<>();
     private final List<MagicalFlame> flames = new ArrayList<>();
@@ -96,6 +96,7 @@ public class GamePanel extends JPanel {
     private final double[] scorePop = new double[2];             // 1 -> 0 after a team scores, drives the score bounce
     private final Map<Integer, Double> spawnT = new HashMap<>(); // player id -> seconds of respawn materialise left
     private double smokeT;
+    private final List<Object[]> blooms = new ArrayList<>();      // {x, y, Color, age}: short light flashes at each firework burst
 
     public GamePanel(NetLink link, int myId) {
         this.link = link;
@@ -302,6 +303,7 @@ public class GamePanel extends JPanel {
             sparks.clear();
             flames.clear();
         }
+        for (Iterator<Object[]> it = blooms.iterator(); it.hasNext(); ) { Object[] b = it.next(); b[3] = (Double) b[3] + dt; if ((Double) b[3] > 0.4) it.remove(); }
         for (Iterator<double[]> it = rings.iterator(); it.hasNext(); ) { double[] r = it.next(); if ((r[3] += dt) >= r[4]) it.remove(); }
         for (Iterator<Object[]> it = notices.iterator(); it.hasNext(); ) { Object[] n = it.next(); n[2] = (Double) n[2] + dt; if ((Double) n[2] > 2.6) it.remove(); }
         for (int t = 0; t < 2; t++) scorePop[t] = Math.max(0, scorePop[t] - 1.4 * dt);
@@ -516,7 +518,7 @@ public class GamePanel extends JPanel {
     private void burst(double x, double y, Color c, int n, double speed) {
         for (int i = 0; i < n; i++) {
             double ang = rnd.nextDouble() * Math.PI * 2, sp = speed * (0.3 + rnd.nextDouble() * 0.7);
-            addP(x, y, Math.cos(ang) * sp, Math.sin(ang) * sp, 0.3 + rnd.nextDouble() * 0.4, c, 4);
+            addP(x, y, Math.cos(ang) * sp, Math.sin(ang) * sp, 0.3 + rnd.nextDouble() * 0.4, c, 5);
         }
     }
 
@@ -557,26 +559,35 @@ public class GamePanel extends JPanel {
     @Override protected void paintComponent(Graphics g0) {
         super.paintComponent(g0);
         Graphics2D g = (Graphics2D) g0.create();
+        paintWorld(g);
+        paintOverlay(g);
+        g.dispose();
+    }
+
+    private double shakeX, shakeY;
+
+    /**
+     * The battlefield: scenery, fighters, bullets, particles. GameView may draw this at a lower resolution than
+     * the screen when the computer is slow; nothing in here is text, so that costs no sharpness.
+     */
+    void paintWorld(Graphics2D g0) {
+        Graphics2D g = (Graphics2D) g0.create();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        // crisp pixel text at the normal size; smooth text once GameView draws the game bigger (full screen)
-        boolean enlarged = g.getTransform().getScaleX() > 1.25;
-        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
-                enlarged ? RenderingHints.VALUE_TEXT_ANTIALIAS_ON : RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR); // crisp pixels
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
 
         // where the local fighter stands, -0.5..0.5 across the arena: drives the parallax layers
         double camX = predReady ? (pred[0] - MapData.W / 2.0) / MapData.W : 0, camY = predReady ? (pred[1] - MapData.H / 2.0) / MapData.H : 0;
         if (last == null) {
             scenery.drawBack(g, vX0(), vY0(), vW(), vH(), 0, 0, time, false);
-            g.setFont(Art.font(22));
-            Art.textCenter(g, "Waiting for server...", (int) vX0(), (int) vW(), (int) (vY0() + vH() / 2), Color.WHITE);
             g.dispose();
             return;
         }
         Snapshot s = last;
         AffineTransform base = g.getTransform();
         double sh = shakeOn ? shake : 0;
-        g.translate((rnd.nextDouble() - 0.5) * sh, (rnd.nextDouble() - 0.5) * sh);
+        shakeX = (rnd.nextDouble() - 0.5) * sh; shakeY = (rnd.nextDouble() - 0.5) * sh;
+        g.translate(shakeX, shakeY);
 
         scenery.drawBack(g, vX0(), vY0(), vW(), vH(), camX, camY, time, fx);
         drawBases(g);
@@ -594,7 +605,7 @@ public class GamePanel extends JPanel {
             if (p.soft) {
                 double r = p.size * (1.6 - a * 0.8);
                 g.fill(new Ellipse2D.Double(p.x - r / 2, p.y - r / 2, r, r));
-            } else g.fillRect((int) p.x - p.size / 2, (int) p.y - p.size / 2, p.size, p.size);
+            } else g.fill(new Ellipse2D.Double(p.x - p.size / 2.0, p.y - p.size / 2.0, p.size, p.size));
             g.setComposite(old);
         }
         for (double[] r : rings) { // expanding ground ripples
@@ -617,15 +628,31 @@ public class GamePanel extends JPanel {
             Composite oldComp = g.getComposite();
             g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, sp.life / sp.max)));
             g.setColor(sp.c);
-            g.fillRect((int) sp.x - sp.size / 2, (int) sp.y - sp.size / 2, sp.size, sp.size);
+            g.setStroke(new BasicStroke(sp.size * 0.75f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.draw(new Line2D.Double(sp.x, sp.y, sp.x - sp.vx * 0.045, sp.y - sp.vy * 0.045)); // motion streak
+            g.setColor(Color.WHITE);
+            g.fill(new Ellipse2D.Double(sp.x - sp.size * 0.3, sp.y - sp.size * 0.3, sp.size * 0.6, sp.size * 0.6));
             g.setComposite(oldComp);
         }
-        for (MagicalFlame fl : flames) {
-            Composite oldComp = g.getComposite();
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, fl.life / fl.max)));
-            g.setColor(fl.c);
-            g.fillRect((int) fl.x - fl.size / 2, (int) fl.y - fl.size / 2, fl.size, fl.size);
-            g.setComposite(oldComp);
+        if (fx) for (Object[] b : blooms) Art.glow(g, (Color) b[2], (Double) b[0], (Double) b[1], 120, (float) (0.55 * (1 - (Double) b[3] / 0.4)));
+        if (fx && flames.size() > 20) // the fire lights the whole room
+            for (int i = 0; i < 6; i++) Art.glow(g, new Color(255, 120, 40), vX0() + vW() * (i + 0.5) / 6, vY0() + vH(), 190, (float) (0.28 + 0.08 * Math.sin(time * 7 + i)));
+        g.setStroke(new BasicStroke(1));
+        for (MagicalFlame fl : flames) { // layered flame tongues: flame colour outside, orange and white-hot inside
+            double k = Math.max(0, fl.life / fl.max), sz = fl.size * (0.4 + 0.6 * k), h = sz * 2.0, w = sz * 1.35;
+            double sway = Math.sin(time * 9 + fl.x * 0.1) * sz * 0.25;
+            int al = (int) (215 * Math.min(1, k * 1.8));
+            for (int layer = 0; layer < 3; layer++) {
+                double sc = 1 - layer * 0.34, lh = h * sc, lw = w * sc;
+                Path2D.Double p = new Path2D.Double();
+                p.moveTo(fl.x - lw / 2, fl.y);
+                p.curveTo(fl.x - lw / 2, fl.y - lh * 0.45, fl.x + sway - lw * 0.15, fl.y - lh * 0.72, fl.x + sway, fl.y - lh);
+                p.curveTo(fl.x + sway + lw * 0.15, fl.y - lh * 0.72, fl.x + lw / 2, fl.y - lh * 0.45, fl.x + lw / 2, fl.y);
+                p.closePath();
+                g.setColor(layer == 0 ? new Color(fl.c.getRed(), fl.c.getGreen(), fl.c.getBlue(), al)
+                    : layer == 1 ? new Color(255, 170, 50, (int) (al * 0.9)) : new Color(255, 245, 190, (int) (al * 0.85)));
+                g.fill(p);
+            }
         }
         scenery.drawFront(g, camX, camY, fx);
         g.setTransform(base);
@@ -638,8 +665,35 @@ public class GamePanel extends JPanel {
             g.setColor(new Color(10, 12, 40, 80));
             g.fillRect(fx0, fy0, fw, fh);
         }
-        drawHud(g, s);
+        g.dispose();
+    }
+
+    /**
+     * Everything that is text or UI: names, HUD, scoreboard, victory and leaderboard. It is always drawn at the
+     * screen's real pixel size (GameView hands in the final graphics), so glyph outlines are rasterised once, at
+     * native resolution, with fractional metrics and kerning, and never resampled.
+     */
+    void paintOverlay(Graphics2D g0) {
+        Graphics2D g = (Graphics2D) g0.create();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        if (last == null) {
+            g.setFont(Type.display(24));
+            Art.textCenter(g, "Waiting for server...", vX0(), vW(), vY0() + vH() / 2, Color.WHITE);
+            g.dispose();
+            return;
+        }
+        Snapshot s = last;
         AffineTransform hudBase = g.getTransform();
+        g.translate(shakeX, shakeY); // names ride with the shaking battlefield, the HUD does not
+        drawNames(g, s);
+        g.setTransform(hudBase);
+        boolean resultsUp = s.winner >= 0 && ((s.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0) || viewLeaderboardManual);
+        if (!resultsUp) drawHud(g, s); // the results table covers the HUD's place
         if (showBoard && s.winner < 0) {
             g.translate(vX0() + (vW() - MapData.W) / 2, vY0() + (vH() - MapData.H) / 2);
             drawBoard(g, s);
@@ -658,10 +712,13 @@ public class GamePanel extends JPanel {
         g.dispose();
     }
 
-    /** The character picture: the original pixel art at the normal size, a smooth version once drawn bigger. */
-    private static java.awt.image.BufferedImage sprite(Graphics2D g, int team, int frame, int worldW, int worldH) {
-        double sc = g.getTransform().getScaleX();
-        return sc > 1.25 ? Art.spriteScaled(team, frame, sc, worldW, worldH) : Art.sprite(team, frame);
+    private void drawNames(Graphics2D g, Snapshot s) {
+        g.setFont(Type.ui(12.5f, true));
+        for (Snapshot.P p : s.players) {
+            double[] xy = renderPos.get(p.id);
+            if (xy == null || !p.alive) continue;
+            Art.namePlate(g, p.name, xy[0], xy[1] + 50, p.team == 0 ? new Color(255, 175, 165) : new Color(185, 230, 255));
+        }
     }
 
     /** Edge shading, made once per window size and zoom. */
@@ -713,7 +770,7 @@ public class GamePanel extends JPanel {
     private void drawEmbers(Graphics2D g) {
         for (double[] e : embers) {
             g.setColor(e[0] < MapData.W / 2.0 ? new Color(255, 150, 60, 170) : new Color(110, 220, 255, 150));
-            g.fillRect((int) e[0], (int) e[1], 2, 2);
+            g.fill(new Ellipse2D.Double(e[0], e[1], 2.4, 2.4));
         }
     }
 
@@ -740,8 +797,8 @@ public class GamePanel extends JPanel {
             Snapshot.F f = s.flags[t];
             double[] xy = f.state == Snapshot.CARRIED ? renderPos.get(f.carrier) : null;
             if (xy == null) continue;
-            if (fx) Art.glow(g, Art.FX[t], xy[0] + 6, xy[1] - 46, 34, 0.5f);
-            Art.flag(g, xy[0] + 4, xy[1] - 46, t, time);
+            if (fx) Art.glow(g, Art.FX[t], xy[0] + 8, xy[1] - 58, 42, 0.5f);
+            Art.flag(g, xy[0] + 5, xy[1] - 58, t, time);
         }
     }
 
@@ -759,14 +816,14 @@ public class GamePanel extends JPanel {
             if (fx && rnd.nextInt(3) == 0) addP(xy[0] + (rnd.nextDouble() - 0.5) * 14, xy[1] + 10, (rnd.nextDouble() - 0.5) * 8, -25 - rnd.nextDouble() * 20, 0.4, new Color(180, 80, 255), 3);
         }
         double px = xy[0], py = xy[1];
-        final int SW = Art.SPR_W * 2, SH = Art.SPR_H * 2;
+        final double SH = Art.SPR_H * PX;
 
         g.setColor(new Color(0, 0, 0, 110));
-        g.fill(new Ellipse2D.Double(px - 17, py + 14, 34, 11)); // shadow under the boots
+        g.fill(new Ellipse2D.Double(px - 22, py + 19, 44, 14)); // shadow under the boots
         if (!p.alive) {
             Composite old = g.getComposite();
             g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.7f));
-            g.drawImage(sprite(g, p.team, 3, 48, 24), (int) px - 24, (int) py + 2, 48, 24, null);
+            pixelArt(g, Art.spriteCrisp(p.team, 3, spriteK(g)), px, py + 18, false);
             g.setComposite(old);
             return;
         }
@@ -775,19 +832,19 @@ public class GamePanel extends JPanel {
         Composite keep = g.getComposite();
 
         g.setColor(new Color(Art.FX[p.team].getRed(), Art.FX[p.team].getGreen(), Art.FX[p.team].getBlue(), 36)); // team ring under the feet
-        g.fill(new Ellipse2D.Double(px - 20, py + 12, 40, 14));
+        g.fill(new Ellipse2D.Double(px - 25, py + 17, 50, 17));
         g.setColor(mine ? Color.WHITE : Art.FX[p.team]);
         g.setStroke(new BasicStroke(mine ? 2 : 1.5f));
-        g.draw(new Ellipse2D.Double(px - 20, py + 12, 40, 14));
+        g.draw(new Ellipse2D.Double(px - 25, py + 17, 50, 17));
         g.setStroke(new BasicStroke(1));
 
         int phase = a == null ? 0 : (int) a[0];
         int frame = moving ? 1 + (phase & 1) : 0;
-        double bob = moving ? ((phase & 1) == 0 ? 0 : -3) : Math.sin(time * 3 + p.id) * 1.5;
+        double bob = moving ? ((phase & 1) == 0 ? 0 : -3.5) : Math.sin(time * 3 + p.id) * 1.8;
         boolean left = Math.cos(aim) < 0;
-        int x0 = (int) px - SW / 2, y0 = (int) (py - 28 + bob);
+        double cy0 = py - 5 + bob, y0 = cy0 - SH / 2;
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-        g.drawImage(sprite(g, p.team, frame, SW, SH), left ? x0 + SW : x0, y0, left ? -SW : SW, SH, null);
+        pixelArt(g, Art.spriteCrisp(p.team, frame, spriteK(g)), px, cy0, left);
         g.setComposite(keep);
 
         // Body energy cycle / magical invulnerability ring
@@ -798,26 +855,41 @@ public class GamePanel extends JPanel {
         double ft = fireT.getOrDefault(p.id, 0.0);
         double kick = -4 * Math.min(1, ft / 0.08); // recoil: the barrel jumps back
         AffineTransform old = g.getTransform();
-        g.translate(px, py - 3 + bob);
+        g.translate(px, py - 4 + bob);
         g.rotate(aim);
+        g.scale(GUN_SCALE, GUN_SCALE);
         if (left) g.scale(1, -1); // keeps the grip underneath when aiming leftwards
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
         Art.gun(g, p.team, kick, ft > 0);
         g.setComposite(keep);
         g.setTransform(old);
-        if (ft > 0 && fx) Art.glow(g, Art.FX[p.team], px + Math.cos(aim) * 36, py - 3 + bob + Math.sin(aim) * 36, 30, 0.9f);
+        if (ft > 0 && fx) Art.glow(g, Art.FX[p.team], px + Math.cos(aim) * 44, py - 4 + bob + Math.sin(aim) * 44, 38, 0.9f);
 
         if (mine && !isCarrier(p.id)) { // bobbing chevron marks the local fighter
-            double cy = y0 - 10 + Math.sin(time * 4) * 2;
+            double cy = y0 - 12 + Math.sin(time * 4) * 2;
             Path2D.Double ch = new Path2D.Double();
-            ch.moveTo(px - 6, cy - 6); ch.lineTo(px + 6, cy - 6); ch.lineTo(px, cy + 2); ch.closePath();
+            ch.moveTo(px - 8, cy - 8); ch.lineTo(px + 8, cy - 8); ch.lineTo(px, cy + 3); ch.closePath();
             g.setColor(new Color(0, 0, 0, 120));
             g.fill(new AffineTransform(1, 0, 0, 1, 1, 1).createTransformedShape(ch));
             g.setColor(Color.WHITE);
             g.fill(ch);
         }
-        g.setFont(Art.font(11));
-        Art.namePlate(g, p.name, px, py + 40, p.team == 0 ? new Color(255, 170, 160) : new Color(180, 228, 255));
+    }
+
+    /** World units per sprite pixel: fighters are 43x58 world units (the original 24x32 at 1.8x). */
+    static final double PX = 2.4, GUN_SCALE = 1.2;
+
+    /** Whole screen pixels per sprite pixel, so each one stays a crisp square. */
+    private static int spriteK(Graphics2D g) { return Math.max(1, (int) Math.round(PX * g.getTransform().getScaleX())); }
+
+    /** Copies a pre-scaled pixel-art image to the screen 1:1, centred on world point (cx, cy), optionally mirrored. */
+    private static void pixelArt(Graphics2D g, BufferedImage im, double cx, double cy, boolean mirror) {
+        AffineTransform at = g.getTransform();
+        int w = im.getWidth(), h = im.getHeight();
+        int dx = (int) Math.round(at.getTranslateX() + cx * at.getScaleX() - w / 2.0), dy = (int) Math.round(at.getTranslateY() + cy * at.getScaleY() - h / 2.0);
+        g.setTransform(new AffineTransform());
+        if (mirror) g.drawImage(im, dx + w, dy, -w, h, null); else g.drawImage(im, dx, dy, null);
+        g.setTransform(at);
     }
 
     private boolean isCarrier(int id) {
@@ -837,20 +909,22 @@ public class GamePanel extends JPanel {
 
     /** Glowing energy bolt with a fading tail; its bright core is exactly at (x, y), the collision position. */
     private void drawBullet(Graphics2D g, double x, double y, double ang, int t) {
-        if (fx) Art.glow(g, Art.FX[t], x, y, 20, 0.75f);
+        if (fx) Art.glow(g, Art.FX[t], x, y, 30, 0.8f);
         AffineTransform old = g.getTransform();
         g.translate(x, y);
         g.rotate(ang);
         Color c = Art.FX[t];
         if (fx) {
-            g.setPaint(new GradientPaint(-34, 0, new Color(c.getRed(), c.getGreen(), c.getBlue(), 0), 0, 0, new Color(c.getRed(), c.getGreen(), c.getBlue(), 170)));
-            g.fill(new Rectangle2D.Double(-34, -2.5, 34, 5));
+            g.setPaint(new GradientPaint(-52, 0, new Color(c.getRed(), c.getGreen(), c.getBlue(), 0), 0, 0, new Color(c.getRed(), c.getGreen(), c.getBlue(), 190)));
+            g.fill(new Rectangle2D.Double(-52, -4, 52, 8));
         }
-        int len = 14 + (int) Math.round(Math.sin(time * 40));
+        double len = 21 + Math.sin(time * 40);
+        g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 90));
+        g.fill(new RoundRectangle2D.Double(-len / 2 - 5, -7, len + 6, 14, 14, 14)); // soft halo
         g.setColor(c);
-        g.fillRect(-len / 2 - 2, -3, len, 6);
+        g.fill(new RoundRectangle2D.Double(-len / 2 - 3, -4.5, len, 9, 9, 9));
         g.setColor(Color.WHITE);
-        g.fillRect(-2, -1, 8, 3);
+        g.fill(new RoundRectangle2D.Double(-3, -2.2, 12, 4.4, 4.4, 4.4));
         g.setTransform(old);
     }
 
@@ -868,7 +942,7 @@ public class GamePanel extends JPanel {
         boolean low = s.timeLeftSec <= 30 && s.winner < 0;
         Color timerC = low ? new Color(255, 80, 80) : new Color(170, 150, 235);
         Art.plate(g, cx - TW / 2, top - 4, TW, PH + 8, 12, timerC, time, fx);
-        g.setFont(Art.title(30));
+        g.setFont(Type.numbers(31));
         Color tc = low && ((int) (time * 3) & 1) == 0 ? new Color(255, 120, 110) : Color.WHITE;
         Art.textCenter(g, String.format("%d:%02d", s.timeLeftSec / 60, s.timeLeftSec % 60), (int) (cx - TW / 2), (int) TW, (int) (top + PH / 2 + 10), tc);
 
@@ -885,22 +959,22 @@ public class GamePanel extends JPanel {
             Color stc = home ? new Color(170, 175, 195) : taken ? GOLD : new Color(255, 130, 100);
             g.setFont(Art.title(15));
             FontMetrics fm = g.getFontMetrics();
-            double nx = t == 0 ? px + 46 : px + PW - 46 - fm.stringWidth(name);
-            Art.text(g, name, (int) nx, (int) (top + 19), TEAM[t]);
-            g.setFont(Art.font(9));
-            fm = g.getFontMetrics();
-            Art.text(g, st, (int) (t == 0 ? px + 46 : px + PW - 46 - fm.stringWidth(st)), (int) (top + 35), stc);
+            double nx = t == 0 ? px + 46 : px + PW - 46 - fm.getStringBounds(name, g).getWidth();
+            Art.text(g, name, nx, top + 19, TEAM[t]);
+            g.setFont(Type.ui(10.5f, true));
+            double stw = g.getFontMetrics().getStringBounds(st, g).getWidth();
+            Art.text(g, st, t == 0 ? px + 46 : px + PW - 46 - stw, top + 35, stc);
 
             AffineTransform keep = g.getTransform(); // score, bouncing when the team captures
-            g.setFont(Art.title(32));
+            g.setFont(Type.numbers(35));
             String sc = String.valueOf(s.score[t]);
             fm = g.getFontMetrics();
-            double sx = t == 0 ? px + PW - 18 - fm.stringWidth(sc) / 2.0 : px + 18 + fm.stringWidth(sc) / 2.0, sy = top + 35;
+            double sx = t == 0 ? px + PW - 18 - fm.getStringBounds(sc, g).getWidth() / 2.0 : px + 18 + fm.getStringBounds(sc, g).getWidth() / 2.0, sy = top + 35;
             g.translate(sx, sy - 11);
             double k = 1 + 0.5 * scorePop[t];
             g.scale(k, k);
             if (scorePop[t] > 0 && fx) Art.glow(g, TEAM[t], 0, 0, 30, (float) (0.8 * scorePop[t]));
-            Art.text(g, sc, -fm.stringWidth(sc) / 2, 11, scorePop[t] > 0 ? Color.WHITE : TEAM[t].brighter());
+            Art.text(g, sc, -fm.getStringBounds(sc, g).getWidth() / 2, 12, scorePop[t] > 0 ? Color.WHITE : TEAM[t].brighter());
             g.setTransform(keep);
         }
 
@@ -909,18 +983,18 @@ public class GamePanel extends JPanel {
         Art.plate(g, x0 + 14, iy, 196, PH, 9, TEAM[mt], time, fx);
         g.setFont(Art.title(15));
         Art.text(g, "YOU - " + TEAM_NAME[mt] + " TEAM", (int) x0 + 28, (int) iy + 19, TEAM[mt].brighter());
-        g.setFont(Art.font(10));
+        g.setFont(Type.ui(11.5f, true));
         int ping = link.pingMs();
         String stats = me == null ? "" : "  K " + me.tags + "  C " + me.captures;
         Art.text(g, "PING " + ping + "ms" + (link.lagSimOn() ? " LAG" : "") + stats, (int) x0 + 28, (int) iy + 36, ping > 150 ? Color.ORANGE : new Color(170, 175, 195));
 
         // bottom left: compact controls guide
-        g.setFont(Art.font(10));
+        g.setFont(Type.ui(11.5f, false));
         Art.textCenter(g, "WASD move   MOUSE aim/fire   TAB scores   F11 fullscreen   F fx " + (fx ? "on" : "off") + "   V shake " + (shakeOn ? "on" : "off") + "   L lag",
-            (int) x0, (int) w, (int) (y0 + h - 10), new Color(255, 255, 255, 120));
+            x0, w, y0 + h - 10, new Color(235, 232, 255, 200));
 
         // event feed
-        g.setFont(Art.font(11));
+        g.setFont(Type.ui(12.5f, true));
         int n = feed.size();
         for (int i = 0; i < n; i++) {
             Object[] f = feed.get(i);
@@ -1075,35 +1149,26 @@ public class GamePanel extends JPanel {
         // 5. Majestic display of the only word: "VICTORY"
         String vicText = "VICTORY";
         int fontSize = Math.min(74, Math.max(50, (int)(cardW * 0.175)));
-        Font vicFont = new Font(Font.SERIF, Font.BOLD, fontSize);
+        Font vicFont = Type.heading(fontSize);
         g.setFont(vicFont);
         FontMetrics fm = g.getFontMetrics();
-        int strW = fm.stringWidth(vicText);
+        java.awt.font.TextLayout tl = new java.awt.font.TextLayout(vicText, vicFont, g.getFontRenderContext());
+        int strW = (int) Math.round(tl.getAdvance());
         int strX = cardX + (cardW - strW) / 2;
         int strY = (int) vicCenterY + fm.getAscent() / 2 - 4;
-
-        // Layer A: Deep shadow
-        g.setColor(new Color(6, 2, 14, 230));
-        g.drawString(vicText, strX, strY + 5);
-
-        // Layer B: Violet ambient rim shadow
-        g.setColor(new Color(110, 30, 200, 190));
-        g.drawString(vicText, strX, strY + 2);
-        g.drawString(vicText, strX + 1, strY + 1);
-
-        // Layer C: Crystalline iridescent vertical gradient
-        Paint oldPaint = g.getPaint();
-        GradientPaint vicGrad = new GradientPaint(
-            strX, strY - fm.getAscent(), Color.WHITE,
-            strX, strY + 2, accent
-        );
-        g.setPaint(vicGrad);
-        g.drawString(vicText, strX, strY);
-
-        // Layer D: Crisp top bevel specular sheen
-        g.setColor(new Color(255, 255, 255, 210));
-        g.drawString(vicText, strX, strY - 1);
-        g.setPaint(oldPaint);
+        // drawn as vector outlines (kerned, letter-spaced), so the edges are smooth at any resolution
+        Shape letters = tl.getOutline(AffineTransform.getTranslateInstance(strX, strY));
+        g.setColor(new Color(6, 2, 14, 210)); // deep shadow
+        g.fill(AffineTransform.getTranslateInstance(0, 4.5).createTransformedShape(letters));
+        g.setStroke(new BasicStroke(3.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(new Color(120, 38, 214, 215)); // violet rim
+        g.draw(letters);
+        g.setPaint(new GradientPaint(strX, strY - fm.getAscent(), Color.WHITE, strX, strY + 2, accent)); // iridescent face
+        g.fill(letters);
+        g.setStroke(new BasicStroke(0.9f));
+        g.setColor(new Color(255, 255, 255, 170)); // specular edge
+        g.draw(letters);
+        g.setStroke(new BasicStroke(1f));
 
         // Layer E: Sparkling diamond star glints on the letters
         Art.starGlint(g, strX + fm.charWidth('V') * 0.25, strY - fm.getAscent() * 0.88, time, 8);
@@ -1155,7 +1220,7 @@ public class GamePanel extends JPanel {
         // 1. Header with Golden Crown and Match Results Title
         Art.crown(g, cardX + cardW / 2.0, cardY + 22, Color.YELLOW, 22, time);
 
-        g.setFont(new Font(Font.SERIF, Font.BOLD, Math.min(22, (int)(cardW * 0.045))));
+        g.setFont(Type.display(Math.min(22, (int)(cardW * 0.045))));
         String headerTitle = "MATCH RESULTS & BATTLE STATISTICS";
         FontMetrics fmH = g.getFontMetrics();
         int thX = cardX + (cardW - fmH.stringWidth(headerTitle)) / 2;
@@ -1165,7 +1230,7 @@ public class GamePanel extends JPanel {
         g.drawString(headerTitle, thX, cardY + 46);
 
         String verdict = (winner == 1 ? "BLUE" : "RED") + " TEAM TRIUMPHANT";
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        g.setFont(Type.ui(13, true));
         FontMetrics fmV = g.getFontMetrics();
         g.setColor(TEAM[winner]);
         g.drawString(verdict, cardX + (cardW - fmV.stringWidth(verdict)) / 2, cardY + 64);
@@ -1205,18 +1270,18 @@ public class GamePanel extends JPanel {
                 Art.crown(g, tx + 18, ty + 18, Color.YELLOW, 16, time);
             }
 
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+            g.setFont(Type.ui(13, true));
             g.setColor(tc);
             g.drawString(TEAM_NAME[t] + " TEAM" + (won ? "  * WINNER" : ""), tx + (won ? 32 : 14), ty + 20);
 
             // Team Score badge
             String scoreStr = "SCORE: " + s.score[t];
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+            g.setFont(Type.ui(13, true));
             g.setColor(Color.WHITE);
             g.drawString(scoreStr, tx + teamW - g.getFontMetrics().stringWidth(scoreStr) - 14, ty + 20);
 
             // Metrics row: KILLS, DEATHS, CAPTURES
-            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+            g.setFont(Type.ui(11, false));
             int colW = (teamW - 24) / 3;
             String[] labels = {"KILLS", "DEATHS", "CAPTURES"};
             int[] vals = {teamKills[t], teamDeaths[t], teamCaps[t]};
@@ -1224,10 +1289,10 @@ public class GamePanel extends JPanel {
                 int cx = tx + 12 + m * colW;
                 g.setColor(new Color(160, 165, 185));
                 g.drawString(labels[m], cx, ty + 42);
-                g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 15));
+                g.setFont(Type.ui(15, true));
                 g.setColor(Color.WHITE);
                 g.drawString(String.valueOf(vals[m]), cx, ty + 62);
-                g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+                g.setFont(Type.ui(11, false));
             }
         }
 
@@ -1243,7 +1308,7 @@ public class GamePanel extends JPanel {
         g.setStroke(new BasicStroke(1.0f));
         g.drawRoundRect(tableX, tableY, tableW, 26, 8, 8);
 
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+        g.setFont(Type.ui(11, true));
         g.setColor(new Color(210, 205, 235));
         int cRank = tableX + 8;
         int cPlayer = tableX + 64;
@@ -1291,24 +1356,24 @@ public class GamePanel extends JPanel {
             Art.medalBadge(g, cRank, ry + 3, rank);
 
             // Player name with (YOU) indicator
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+            g.setFont(Type.ui(12, true));
             boolean isMe = (p.id == myId);
             g.setColor(isMe ? Color.WHITE : new Color(220, 225, 240));
             String pName = p.name + (isMe ? " (YOU)" : "");
             g.drawString(pName, cPlayer, ry + 19);
 
             // Team tag
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+            g.setFont(Type.ui(11, true));
             g.setColor(TEAM[p.team]);
             g.drawString(p.team == 0 ? "RED" : "BLUE", cTeam, ry + 19);
 
             // Score
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+            g.setFont(Type.ui(12, true));
             g.setColor(new Color(255, 235, 140));
             g.drawString(String.valueOf(p.score), cScore, ry + 19);
 
             // Kills, Deaths, Captures
-            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+            g.setFont(Type.ui(12, false));
             g.setColor(Color.WHITE);
             g.drawString(String.valueOf(p.tags), cKills, ry + 19);
             g.drawString(String.valueOf(p.deaths), cDeaths, ry + 19);
@@ -1333,7 +1398,7 @@ public class GamePanel extends JPanel {
         g.setColor(b1Border);
         g.setStroke(new BasicStroke(hoverLeaderboardPlayAgain ? 2.0f : 1.2f));
         g.drawRoundRect(btn1X, btnY, btnW, btnH, 16, 16);
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        g.setFont(Type.ui(13, true));
         Art.textCenter(g, "PLAY AGAIN", btn1X, btnW, btnY + 22, Color.WHITE);
 
         // Button 2: View Celebration
@@ -1348,43 +1413,37 @@ public class GamePanel extends JPanel {
     }
 
     private void triggerOpeningCelebration(int winner) {
-        int vw = (int) Math.round(vW());
-        int vh = (int) Math.round(vH());
+        double wx = vX0(), wy = vY0(), vw = vW(), vh = vH();
         Color teamC = TEAM[winner];
         Color purple = new Color(170, 60, 255);
-        double wx = vX0(), wy = vY0();
-        burst(wx + vw / 2.0, wy + vh / 2.0, purple, 45, 260);
-        burst(wx + vw / 2.0, wy + vh / 2.0, teamC, 35, 220);
-        launchRocket(wx + vw * 0.25, wy + vh, -25, -360, winner);
-        launchRocket(wx + vw * 0.75, wy + vh, 25, -360, winner);
-        launchRocket(wx + vw * 0.50, wy + vh, 0, -390, winner);
-        nextRocketTime = 0.5;
+        burst(wx + vw / 2, wy + vh / 2, purple, 70, 340);
+        burst(wx + vw / 2, wy + vh / 2, teamC, 60, 300);
+        burst(wx + vw / 2, wy + vh / 2, new Color(255, 200, 90), 50, 380);
+        ring(wx + vw / 2, wy + vh / 2 - 10, winner, 1.4, 260);
+        for (int i = 0; i < 9; i++) // an opening salvo across the whole width
+            launchRocket(wx + vw * (0.08 + 0.84 * i / 8.0), wy + vh, (i - 4) * 14, -470 - rnd.nextDouble() * 120, winner);
+        nextRocketTime = 0.7;
     }
 
     private void launchRocket(double x, double y, double vx, double vy, int team) {
         FireworkRocket r = new FireworkRocket();
         r.x = x; r.y = y; r.vx = vx; r.vy = vy;
-        r.fuse = 0.7 + rnd.nextDouble() * 0.4;
+        r.fuse = 0.75 + rnd.nextDouble() * 0.5;
         r.team = team;
-        r.c = team == 1 ? (rnd.nextBoolean() ? new Color(60, 220, 255) : new Color(170, 70, 255))
-                        : (rnd.nextBoolean() ? new Color(255, 70, 90) : new Color(170, 70, 255));
+        double k = rnd.nextDouble();
+        r.c = k < 0.34 ? new Color(170, 70, 255) : k < 0.67 ? (team == 1 ? new Color(60, 220, 255) : new Color(255, 70, 90)) : new Color(255, 190, 80);
         rockets.add(r);
     }
 
+    /** Fireworks keep going for the whole victory screen; fire rises along the bottom and beside the card. */
     private void stepCelebration(double dt, int winner) {
-        int vw = (int) Math.round(vW());
-        int vh = (int) Math.round(vH());
+        double vw = vW(), vh = vH(), wx = vX0(), wy = vY0();
 
-        if (victoryTimer < 7.0 && victoryTimer >= nextRocketTime) {
-            nextRocketTime += 0.55 + rnd.nextDouble() * 0.4;
-            double rx = vX0() + vw * (0.15 + rnd.nextDouble() * 0.7);
-            double rvx = (rnd.nextDouble() - 0.5) * 80;
-            double rvy = -340 - rnd.nextDouble() * 100;
-            launchRocket(rx, vY0() + vh, rvx, rvy, winner);
-            if (rnd.nextDouble() < 0.45) {
-                double rx2 = vX0() + vw * (0.15 + rnd.nextDouble() * 0.7);
-                launchRocket(rx2, vY0() + vh, (rnd.nextDouble() - 0.5) * 80, -340 - rnd.nextDouble() * 100, winner);
-            }
+        if (victoryTimer < 58.0 && victoryTimer >= nextRocketTime) {
+            nextRocketTime += 0.14 + rnd.nextDouble() * 0.22;
+            int n = 1 + rnd.nextInt(3);
+            for (int i = 0; i < n; i++)
+                launchRocket(wx + vw * (0.06 + rnd.nextDouble() * 0.88), wy + vh, (rnd.nextDouble() - 0.5) * 120, -430 - rnd.nextDouble() * 170, winner);
         }
 
         for (Iterator<FireworkRocket> it = rockets.iterator(); it.hasNext(); ) {
@@ -1393,7 +1452,8 @@ public class GamePanel extends JPanel {
             r.x += r.vx * dt;
             r.y += r.vy * dt;
             r.vy += 90 * dt;
-            addSpark(r.x, r.y, (rnd.nextDouble() - 0.5) * 20, rnd.nextDouble() * 30 + 10, 0.25, new Color(255, 220, 150), 2);
+            addSpark(r.x, r.y, (rnd.nextDouble() - 0.5) * 24, rnd.nextDouble() * 40 + 10, 0.35, new Color(255, 220, 150), 3);
+            addSpark(r.x, r.y, (rnd.nextDouble() - 0.5) * 24, rnd.nextDouble() * 40 + 10, 0.25, r.c, 2);
             if (r.fuse <= 0) {
                 detonateRocket(r);
                 it.remove();
@@ -1406,58 +1466,72 @@ public class GamePanel extends JPanel {
             s.x += s.vx * dt;
             s.y += s.vy * dt;
             s.vy += 85 * dt;
-            s.vx *= 0.97;
+            s.vx *= 0.975;
             if (s.life <= 0) it.remove();
         }
 
-        int cardW = Math.min(520, Math.max(340, vw - 48));
-        int cardH = Math.min(380, Math.max(260, vh - 56));
-        int cardX = (vw - cardW) / 2 + ox();
-        int cardY = (vh - cardH) / 2 + oy();
-
-        Color flameC = winner == 1 ? new Color(60, 220, 255) : new Color(255, 70, 90);
-        Color purpleC = new Color(170, 60, 255);
-        if (flames.size() < 120 && rnd.nextInt(2) == 0) {
-            addFlame(cardX + 32 + (rnd.nextDouble() - 0.5) * 12, cardY + cardH - 18, (rnd.nextDouble() - 0.5) * 18, -40 - rnd.nextDouble() * 40, 0.5 + rnd.nextDouble() * 0.4, rnd.nextBoolean() ? purpleC : flameC, 3);
-            addFlame(cardX + cardW - 32 + (rnd.nextDouble() - 0.5) * 12, cardY + cardH - 18, (rnd.nextDouble() - 0.5) * 18, -40 - rnd.nextDouble() * 40, 0.5 + rnd.nextDouble() * 0.4, rnd.nextBoolean() ? purpleC : flameC, 3);
-            addFlame(cardX + cardW * (0.2 + rnd.nextDouble() * 0.6), cardY + cardH - 30, (rnd.nextDouble() - 0.5) * 14, -25 - rnd.nextDouble() * 30, 0.8 + rnd.nextDouble() * 0.6, purpleC, 2);
+        // a wall of fire along the bottom of the screen, in orange, red, gold and the winners' colour
+        Color teamC = winner == 1 ? new Color(60, 220, 255) : new Color(255, 70, 90);
+        Color[] fire = {new Color(255, 120, 30), new Color(255, 70, 30), new Color(255, 120, 30), new Color(255, 190, 60), teamC, new Color(170, 60, 255)};
+        int spawn = (int) Math.ceil(dt * 200);
+        for (int i = 0; i < spawn; i++)
+            addFlame(wx + rnd.nextDouble() * vw, wy + vh + 6, (rnd.nextDouble() - 0.5) * 30, -90 - rnd.nextDouble() * 120,
+                0.8 + rnd.nextDouble() * 1.0, fire[rnd.nextInt(fire.length)], 13 + rnd.nextInt(14));
+        int cardW = (int) Math.min(520, Math.max(340, vw - 48)), cardH = (int) Math.min(380, Math.max(260, vh - 56));
+        double cardX = (vw - cardW) / 2 + wx, cardY = (vh - cardH) / 2 + wy;
+        for (int i = 0; i < Math.max(1, spawn / 2); i++) { // tall columns of flame on both sides of the victory panel
+            double side = rnd.nextBoolean() ? cardX - 18 : cardX + cardW + 18;
+            addFlame(side + (rnd.nextDouble() - 0.5) * 22, cardY + cardH - 14, (rnd.nextDouble() - 0.5) * 24, -70 - rnd.nextDouble() * 110,
+                0.7 + rnd.nextDouble() * 0.8, rnd.nextBoolean() ? new Color(170, 60, 255) : teamC, 10 + rnd.nextInt(10));
         }
+        // embers drifting up across the whole view
+        if (rnd.nextInt(2) == 0) addSpark(wx + rnd.nextDouble() * vw, wy + vh, (rnd.nextDouble() - 0.5) * 40, -120 - rnd.nextDouble() * 140, 1.6, new Color(255, 170, 70), 3);
 
         for (Iterator<MagicalFlame> it = flames.iterator(); it.hasNext(); ) {
             MagicalFlame f = it.next();
             f.life -= dt;
-            f.x += f.vx * dt;
+            f.x += (f.vx + Math.sin(time * 6 + f.y * 0.05) * 14) * dt;
             f.y += f.vy * dt;
             if (f.life <= 0) it.remove();
         }
     }
 
     private void addSpark(double x, double y, double vx, double vy, double life, Color c, int size) {
-        if (sparks.size() >= 400) return;
+        if (sparks.size() >= 1500) return;
         FireworkSpark s = new FireworkSpark();
         s.x = x; s.y = y; s.vx = vx; s.vy = vy; s.life = s.max = life; s.c = c; s.size = size;
         sparks.add(s);
     }
 
     private void addFlame(double x, double y, double vx, double vy, double life, Color c, int size) {
-        if (flames.size() >= 200) return;
+        if (flames.size() >= 420) return;
         MagicalFlame f = new MagicalFlame();
         f.x = x; f.y = y; f.vx = vx; f.vy = vy; f.life = f.max = life; f.c = c; f.size = size;
         flames.add(f);
     }
 
+    /** Peony, ring, double ring and willow bursts, each in the winners' colours plus violet, gold and white. */
     private void detonateRocket(FireworkRocket r) {
         Sfx.play("firework");
-        int count = 35 + rnd.nextInt(20);
         Color primary = r.c;
         Color secondary = r.team == 1 ? new Color(60, 220, 255) : new Color(255, 60, 100);
-        Color violet = new Color(190, 70, 255);
+        Color violet = new Color(190, 70, 255), gold = new Color(255, 205, 90);
+        int kind = rnd.nextInt(4);
+        int count = kind == 1 ? 64 : 100 + rnd.nextInt(50);
+        double speed = 160 + rnd.nextDouble() * 120;
         for (int i = 0; i < count; i++) {
-            double ang = rnd.nextDouble() * Math.PI * 2;
-            double spd = 60 + rnd.nextDouble() * 180;
-            Color sc = rnd.nextInt(3) == 0 ? Color.WHITE : rnd.nextBoolean() ? primary : (rnd.nextBoolean() ? secondary : violet);
-            addSpark(r.x, r.y, Math.cos(ang) * spd, Math.sin(ang) * spd, 0.5 + rnd.nextDouble() * 0.6, sc, rnd.nextInt(3) + 2);
+            double ang = kind == 1 ? i * Math.PI * 2 / count : rnd.nextDouble() * Math.PI * 2;
+            double spd = kind == 1 ? speed : 50 + rnd.nextDouble() * speed * 1.4;
+            Color sc = rnd.nextInt(4) == 0 ? Color.WHITE : rnd.nextInt(3) == 0 ? gold : rnd.nextBoolean() ? primary : (rnd.nextBoolean() ? secondary : violet);
+            double life = kind == 3 ? 1.3 + rnd.nextDouble() * 0.8 : 0.7 + rnd.nextDouble() * 0.7; // willow: long falling trails
+            addSpark(r.x, r.y, Math.cos(ang) * spd, Math.sin(ang) * spd, life, sc, 3 + rnd.nextInt(3));
         }
+        if (kind == 2) for (int i = 0; i < 40; i++) { // inner ring
+            double ang = i * Math.PI * 2 / 40;
+            addSpark(r.x, r.y, Math.cos(ang) * speed * 0.5, Math.sin(ang) * speed * 0.5, 0.9, gold, 4);
+        }
+        ring(r.x, r.y - 10, r.team, 0.5, 70);
+        if (blooms.size() < 14) blooms.add(new Object[]{r.x, r.y, primary, 0.0});
     }
 
     private static Snapshot.P find(Snapshot s, int id) {

@@ -2,19 +2,22 @@ package ctf.common;
 
 /** Shared map constants. Part A (server) must use the same values and the same resolve() for movement. */
 public final class MapData {
-    public static final int W = 800, H = 600, R = 14;
+    public static final int W = 1120, H = 630, R = 17; // 16:9 arena, so a widescreen monitor is filled by the playfield itself
     public static final double SPEED = 180; // px/sec
     /** x, y, w, h */
-    public static final double[][] WALLS = {
-        {380, 200, 40, 200}, {150, 120, 100, 24}, {550, 456, 100, 24}, {250, 380, 24, 100}, {526, 120, 24, 100}};
+    public static final double[][] WALLS = { // point-symmetric about the arena centre, so both teams get the same routes
+        {540, 215, 40, 200},
+        {230, 110, 140, 24}, {750, 496, 140, 24},
+        {340, 400, 24, 110}, {756, 120, 24, 110},
+        {420, 250, 24, 130}, {676, 250, 24, 130}};
     public static final double BULLET_SPEED = 420;   // px/sec; server and client prediction must agree
     public static final double FIRE_INTERVAL = 0.25; // sec between shots; the server enforces it, the client only mirrors it
     /** index = team (0 red, 1 blue): x, y, radius */
-    public static final double[][] BASES = {{60, 300, 45}, {740, 300, 45}};
+    public static final double[][] BASES = {{70, 315, 45}, {1050, 315, 45}};
 
     /** Protective power tent constants */
-    public static final double TENT_X = 400;
-    public static final double TENT_Y = 500;
+    public static final double TENT_X = 560;
+    public static final double TENT_Y = 545;
     public static final double TENT_R = 32;          // radius of protection trigger zone
     public static final double SHIELD_DURATION = 5.0;// duration of invulnerability in seconds
     public static final double TENT_RECHARGE = 10.0; // cooldown in seconds before tent can be collected again
