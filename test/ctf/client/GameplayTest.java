@@ -42,6 +42,8 @@ public class GameplayTest {
         runTest("Authoritative Match End Elapsed Timing & 60s Auto Transition", GameplayTest::testAuthoritativeMatchEndElapsedTiming);
         runTest("Post-Match Leaderboard Layout & Team Statistics Aggregation", GameplayTest::testPostMatchLeaderboardLayout);
         runTest("Match Reset Cleanly Clears All Match Statistics", GameplayTest::testMatchResetStatistics);
+        runTest("Typography Fonts Resolve & Pixel-Art Sprites Scale By Whole Pixels", GameplayTest::testTypographyAndSprites);
+        runTest("Wide/Tall Windows Are Filled With Scenery (No Black Bars)", GameplayTest::testViewFillsWindow);
 
         System.out.println("\n=== Test Results Summary ===");
         System.out.println("Passed: " + passed + " | Failed: " + failed);
@@ -335,7 +337,7 @@ public class GameplayTest {
         // Render to an offscreen image
         BufferedImage img = new BufferedImage(MapData.W, MapData.H, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = img.createGraphics();
-        panel.paint(g);
+        paintOnEdt(panel, g);
         g.dispose();
 
         // Ensure non-blank render
@@ -377,7 +379,8 @@ public class GameplayTest {
     }
 
     static void testLineOfSight() {
-        assertTrue(!Demo.clear(300, 300, 500, 300), "Center wall must block sight");
+        double[] cwl = MapData.WALLS[0];
+        assertTrue(!Demo.clear(cwl[0] - 100, cwl[1] + cwl[3] / 2, cwl[0] + cwl[2] + 100, cwl[1] + cwl[3] / 2), "Center wall must block sight");
         assertTrue(Demo.clear(100, 300, 300, 300), "Open floor must not block sight");
     }
 
@@ -392,11 +395,12 @@ public class GameplayTest {
         assertTrue(p[0] <= MapData.W - MapData.R, "Player x clamped inside arena max X");
         assertTrue(p[1] <= MapData.H - MapData.R, "Player y clamped inside arena max Y");
 
-        // Player placed inside center wall (WALLS[0]: {380, 200, 40, 200})
-        p = new double[]{400, 300};
+        // Player placed inside the centre wall (WALLS[0])
+        double[] cw = MapData.WALLS[0];
+        p = new double[]{cw[0] + cw[2] / 2, cw[1] + cw[3] / 2};
         MapData.resolve(p);
-        // Wall spans x from 380 to 420. With R=14, p[0] must be <= 380-14=366 or >= 420+14=434
-        boolean outOfWall = p[0] <= 366 || p[0] >= 434 || p[1] <= 186 || p[1] >= 414;
+        boolean outOfWall = p[0] <= cw[0] - MapData.R + 1e-6 || p[0] >= cw[0] + cw[2] + MapData.R - 1e-6
+            || p[1] <= cw[1] - MapData.R + 1e-6 || p[1] >= cw[1] + cw[3] + MapData.R - 1e-6;
         assertTrue(outOfWall, "MapData.resolve must push player outside wall boundary");
     }
 
@@ -464,6 +468,59 @@ public class GameplayTest {
         assertEquals(1, demo.s.players[0].tags, "Shooter gets credit for elimination after shield expires");
     }
 
+    /** The panel's own timer mutates particle lists on the Swing thread, so painting must happen there too, as in the real game. */
+    static void paintOnEdt(GamePanel panel, Graphics2D g) {
+        try { javax.swing.SwingUtilities.invokeAndWait(() -> panel.paint(g)); }
+        catch (Exception e) { throw new RuntimeException(e); }
+    }
+
+    static void testTypographyAndSprites() {
+        java.awt.Font f = Type.display(20), u = Type.ui(12, true), n = Type.numbers(30);
+        assertTrue(f.getSize2D() == 20f && u.getSize2D() == 12f && n.getSize2D() == 30f, "fonts keep their fractional sizes");
+        assertTrue(f == Type.display(20), "fonts are cached, not rebuilt per frame");
+        assertTrue(Type.heading(60).getStringBounds("VICTORY", new java.awt.font.FontRenderContext(null, true, true)).getWidth() > 60, "heading has real glyph widths");
+        for (int k = 2; k <= 4; k++) {
+            BufferedImage a = Art.spriteCrisp(0, 0, k);
+            assertTrue(a.getWidth() == Art.SPR_W * k && a.getHeight() == Art.SPR_H * k, "sprite is an exact multiple at k=" + k);
+            BufferedImage src = Art.spriteCrisp(0, 0, 1);
+            boolean same = true; // every sprite pixel is a k x k block of one colour: no blur
+            for (int y = 0; y < a.getHeight() && same; y += 3) for (int x = 0; x < a.getWidth(); x += 3) if (a.getRGB(x, y) != src.getRGB(x / k, y / k)) { same = false; break; }
+            assertTrue(same, "pixel art stays crisp (nearest neighbour) at k=" + k);
+        }
+    }
+
+    static void testViewFillsWindow() {
+        NetLink link = new NetLink() {
+            @Override public void sendInput(int dx, int dy, double aim, boolean shoot) {}
+            @Override public int pingMs() { return 20; }
+            @Override public void requestPlayAgain() {}
+        };
+        GamePanel panel = new GamePanel(link, 0);
+        panel.setSize(MapData.W, MapData.H); // GameView does the same: the panel is never shown, only painted
+        Snapshot s = new Snapshot();
+        Snapshot.P p0 = new Snapshot.P(); p0.id = 0; p0.name = "You"; p0.team = 0; p0.x = 100; p0.y = 100;
+        s.players = new Snapshot.P[]{p0};
+        panel.onSnapshot(s);
+        // 16:9, 21:9 and a tall window: the visible world rectangle is wider/taller than the arena
+        double[][] views = {{-16, -16, 1152, 662}, {-300, -16, 1720, 662}, {-16, -150, 1152, 940}};
+        for (double[] v : views) {
+            int w = (int) v[2], h = (int) v[3];
+            BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = img.createGraphics();
+            g.translate(-v[0], -v[1]);
+            g.setClip(new java.awt.geom.Rectangle2D.Double(v[0], v[1], v[2], v[3]));
+            panel.setView(v[0], v[1], v[2], v[3]);
+            paintOnEdt(panel, g);
+            g.dispose();
+            int dark = 0, n = 0;
+            for (int y = h / 4; y < h; y += 40) for (int x = 0; x < w; x += 40) { // every sampled pixel must be painted scenery, not pure black
+                n++;
+                if ((img.getRGB(x, y) & 0xFFFFFF) == 0) dark++;
+            }
+            assertTrue(dark == 0, "no pure-black bars in a " + w + "x" + h + " world view (" + dark + "/" + n + ")");
+        }
+    }
+
     static void testResponsiveVictoryLayout() {
         NetLink link = new NetLink() {
             @Override public void sendInput(int dx, int dy, double aim, boolean shoot) {}
@@ -489,7 +546,7 @@ public class GameplayTest {
 
             BufferedImage img = new BufferedImage(vw, vh, BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = img.createGraphics();
-            panel.paint(g);
+            paintOnEdt(panel, g);
             g.dispose();
 
             // Verify safe margins and responsive card bounds
@@ -600,7 +657,7 @@ public class GameplayTest {
 
             BufferedImage img = new BufferedImage(vw, vh, BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = img.createGraphics();
-            panel.paint(g);
+            paintOnEdt(panel, g);
             g.dispose();
 
             // Verify safe margins and responsive card bounds

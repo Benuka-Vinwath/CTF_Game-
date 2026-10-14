@@ -6,16 +6,14 @@
             "name": "Play CTF (client)",
             "request": "launch",
             "mainClass": "ctf.client.Main",
-            "projectName": "CTF_Game",
-            "vmArgs": "-Dsun.java2d.d3d=false"
+            "projectName": "CTF_Game"
         },
         {
             "type": "java",
             "name": "Run CTF Client Demo",
             "request": "launch",
             "mainClass": "ctf.client.Demo",
-            "projectName": "CTF_Game",
-            "vmArgs": "-Dsun.java2d.d3d=false"
+            "projectName": "CTF_Game"
         }
     ]
 }

@@ -87,9 +87,10 @@ public class ServerLogicTest {
     void wallsBlockMovement() {
         newGame(0, 1);
         Player a = p(0);
-        place(a, 300, 300);   // wall {380,200,40,200} is ahead
+        double[] w = MapData.WALLS[0];   // the centre column is ahead
+        place(a, w[0] - 100, w[1] + w[3] / 2);
         for (int i = 0; i < 90; i++) { input(a, 1, 0, 0, false); g.tick(); }
-        check(a.x <= 380 - MapData.R + 1e-6, "player cannot walk into a wall (x=" + a.x + ")");
+        check(a.x <= w[0] - MapData.R + 1e-6, "player cannot walk into a wall (x=" + a.x + ")");
     }
 
     void staleInputStopsPlayer() {
@@ -143,7 +144,7 @@ public class ServerLogicTest {
     void fireRateIsLimited() {
         newGame(0, 1);
         Player a = p(0);
-        place(a, 100, 600 - 20);
+        place(a, 100, MapData.H - 20);
         for (int i = 0; i < 30; i++) {
             input(a, 0, 0, -Math.PI / 2, true);   // held fire for one second, aimed at the top
             g.tick();

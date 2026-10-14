@@ -9,3 +9,6 @@ ctf-client-error.log
 # OS artifacts
 .DS_Store
 Thumbs.db
+
+# Logs from running the client or server
+*.log

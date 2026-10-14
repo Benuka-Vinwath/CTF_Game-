@@ -10,5 +10,4 @@ $files = (Get-ChildItem src -Recurse -Filter *.java).FullName
 javac --release 17 -d out $files
 if ($LASTEXITCODE -ne 0) { Write-Host "Compile failed"; exit 1 }
 
-# sun.java2d.d3d=false: avoids a blank white window on some AMD Radeon laptops
-java "-Dsun.java2d.d3d=false" -cp out ctf.client.Main $Server
+java -cp out ctf.client.Main $Server

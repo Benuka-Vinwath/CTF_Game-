@@ -21,11 +21,10 @@ public class GamePanel extends JPanel {
     static final Color[] TEAM = {new Color(235, 70, 70), new Color(70, 150, 255)};
     static final long INTERP_DELAY_NS = 100_000_000L; // render 100ms in the past (~3 snapshots)
     static final double SHOOT_COOLDOWN = 0.25;
-    static final int PAD = 20; // background is oversized by this much so screen shake never shows an edge
-    static final int MAX_PARTICLES = 800;
+    static final int MAX_PARTICLES = 1000;
 
     private static final class Particle {
-        double x, y, vx, vy, life, max; Color c; int size = 4;
+        double x, y, vx, vy, life, max; Color c; int size = 4; boolean soft;
     }
 
     private static final class FireworkRocket {
@@ -50,7 +49,7 @@ public class GamePanel extends JPanel {
     private final List<Particle> parts = new ArrayList<>();
     private final List<double[]> beams = new ArrayList<>();      // {x, y, team, life}
     private final List<Object[]> feed = new ArrayList<>();       // {text, expiryNs}
-    private final double[][] embers = new double[40][4];         // x, y, speed, phase
+    private final double[][] embers = new double[72][4];         // x, y, speed, phase
     private final List<FireworkRocket> rockets = new ArrayList<>();
     private final List<FireworkSpark> sparks = new ArrayList<>();
     private final List<MagicalFlame> flames = new ArrayList<>();
@@ -85,12 +84,19 @@ public class GamePanel extends JPanel {
     private double shake, flash, shootCd, sendAcc, time;
     private long lastTickNs = System.nanoTime();
     private final Random rnd = new Random();
-    private final BufferedImage bg = loadBackground();
-    private final BufferedImage vignette = Art.vignette(MapData.W, MapData.H);
-    // When GameView draws the game bigger (full screen), the background and the edge shading are stretched
-    // once per window size and reused every frame; stretching them again each frame was far too slow.
-    private BufferedImage bgCache, bgCacheVig, fogCache;
-    private double cacheScale;
+    private final Scenery scenery = new Scenery();
+    // The part of the world on screen, in world units. GameView sets it so the picture fills the whole window;
+    // until then (and when a test paints the panel directly) it is simply the panel's own size.
+    private double viewX, viewY, viewW, viewH;
+    private boolean viewSet;
+    private BufferedImage vignetteImg;
+    private double vigScale, vigW, vigH;
+    private final List<double[]> rings = new ArrayList<>();      // {x, y, team (-1 white), age, life, radius}
+    private final List<Object[]> notices = new ArrayList<>();    // {text, color, age}: big centre-screen announcements
+    private final double[] scorePop = new double[2];             // 1 -> 0 after a team scores, drives the score bounce
+    private final Map<Integer, Double> spawnT = new HashMap<>(); // player id -> seconds of respawn materialise left
+    private double smokeT;
+    private final List<Object[]> blooms = new ArrayList<>();      // {x, y, Color, age}: short light flashes at each firework burst
 
     public GamePanel(NetLink link, int myId) {
         this.link = link;
@@ -269,10 +275,6 @@ public class GamePanel extends JPanel {
             double left = e.getValue() - dt;
             if (left <= 0) it.remove(); else e.setValue(left);
         }
-        if (fx) { // short glowing trail behind every bullet
-            for (double[] g : ghosts) addP(g[7], g[8], 0, 0, 0.18, Art.FX[(int) g[4]], 3);
-            if (last != null) for (double[] b : last.bullets) if (!hidden.contains(b)) addP(b[0], b[1], 0, 0, 0.18, Art.FX[teamOf(b)], 3);
-        }
         if (last != null) // a new server bullet right at someone's gun means they just fired
             for (double[] b : last.bullets) if (!hidden.contains(b))
                 for (Snapshot.P p : last.players) {
@@ -290,7 +292,7 @@ public class GamePanel extends JPanel {
         for (double[] e : embers) {
             e[1] -= e[2] * dt;
             e[0] += Math.sin(time * 1.5 + e[3]) * 12 * dt;
-            if (e[1] < -5) respawnEmber(e, false);
+            if (e[1] < vY0() - 5) respawnEmber(e, false);
         }
         if (last != null && last.winner >= 0) {
             victoryTimer += dt;
@@ -300,6 +302,24 @@ public class GamePanel extends JPanel {
             rockets.clear();
             sparks.clear();
             flames.clear();
+        }
+        for (Iterator<Object[]> it = blooms.iterator(); it.hasNext(); ) { Object[] b = it.next(); b[3] = (Double) b[3] + dt; if ((Double) b[3] > 0.4) it.remove(); }
+        for (Iterator<double[]> it = rings.iterator(); it.hasNext(); ) { double[] r = it.next(); if ((r[3] += dt) >= r[4]) it.remove(); }
+        for (Iterator<Object[]> it = notices.iterator(); it.hasNext(); ) { Object[] n = it.next(); n[2] = (Double) n[2] + dt; if ((Double) n[2] > 2.6) it.remove(); }
+        for (int t = 0; t < 2; t++) scorePop[t] = Math.max(0, scorePop[t] - 1.4 * dt);
+        for (Iterator<Map.Entry<Integer, Double>> it = spawnT.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<Integer, Double> e = it.next();
+            double left = e.getValue() - dt;
+            if (left <= 0) it.remove(); else e.setValue(left);
+        }
+        smokeT -= dt;
+        if (fx && smokeT <= 0) { // smoke and sparks rising from the braziers
+            smokeT = 0.14;
+            for (double[] w : MapData.WALLS) {
+                double tx = w[0] + w[2] / 2, ty = w[1] - 16;
+                addSoft(tx + (rnd.nextDouble() - 0.5) * 6, ty, (rnd.nextDouble() - 0.5) * 10, -22 - rnd.nextDouble() * 12, 1.1, new Color(120, 112, 150), 9);
+                if (rnd.nextInt(3) == 0) addP(tx, ty + 4, (rnd.nextDouble() - 0.5) * 30, -50 - rnd.nextDouble() * 40, 0.6, new Color(255, 170, 70), 2);
+            }
         }
         shake = Math.max(0, shake - 40 * dt);
         flash = Math.max(0, flash - 2.5 * dt);
@@ -352,8 +372,8 @@ public class GamePanel extends JPanel {
     }
 
     private void respawnEmber(double[] e, boolean anywhere) {
-        e[0] = rnd.nextDouble() * MapData.W;
-        e[1] = anywhere ? rnd.nextDouble() * MapData.H : MapData.H + 5;
+        e[0] = vX0() + rnd.nextDouble() * vW();
+        e[1] = anywhere ? vY0() + rnd.nextDouble() * vH() : vY0() + vH() + 5;
         e[2] = 15 + rnd.nextDouble() * 30;
         e[3] = rnd.nextDouble() * 6.28;
     }
@@ -371,19 +391,23 @@ public class GamePanel extends JPanel {
             if (o.alive && !p.alive) {
                 burst(o.x, o.y, Art.FX[o.team], 28, 230);
                 addP(o.x, o.y, 0, 0, 0.12, Color.WHITE, 14);
+                ring(o.x, o.y, o.team, 0.55, 58);
                 Sfx.play("hit");
-                say(p.name + " was eliminated");
+                say(p.name + " was eliminated", TEAM[o.team]);
                 if (p.id == myId) { flash = 1; shake = 12; }
             } else if (!o.alive && p.alive) {
                 burst(p.x, p.y, Art.FX[p.team], 18, 120);
                 beams.add(new double[]{p.x, p.y + 12, p.team, 0.6});
+                ring(p.x, p.y, p.team, 0.7, 50);
+                spawnT.put(p.id, 0.7);
             }
             // Shield state transitions
             if (o.shieldSec <= 0 && p.shieldSec > 0) {
                 burst(p.x, p.y, new Color(170, 70, 255), 24, 160);
                 burst(p.x, p.y, new Color(80, 230, 255), 16, 120);
                 Sfx.play("shield");
-                say(p.name + " activated MAGIC SHIELD");
+                say(p.name + " activated MAGIC SHIELD", new Color(170, 90, 255));
+                if (p.id == myId) announce("MAGIC SHIELD", new Color(170, 90, 255));
             } else if (o.shieldSec > 0 && p.shieldSec <= 0) {
                 burst(p.x, p.y, new Color(170, 60, 255), 20, 140);
                 Sfx.play("expire");
@@ -415,19 +439,30 @@ public class GamePanel extends JPanel {
         for (int t = 0; t < 2; t++) {
             Snapshot.F o = a.flags[t], n = b.flags[t];
             if (n.state == Snapshot.CARRIED && o.state != Snapshot.CARRIED) {
-                say(name(b, n.carrier) + " took the " + TEAM_NAME[t] + " flag");
+                say(name(b, n.carrier) + " took the " + TEAM_NAME[t] + " flag", GOLD);
+                announce(n.carrier == myId ? "YOU TOOK THE " + TEAM_NAME[t] + " FLAG" : TEAM_NAME[t] + " FLAG TAKEN", n.carrier == myId ? GOLD : TEAM[t]);
                 Sfx.play("pickup");
+                double[] at = flagSpot(b, n);
+                burst(at[0], at[1], Art.FX[t], 22, 170);
+                ring(at[0], at[1], t, 0.7, 54);
             } else if (n.state == Snapshot.DROPPED && o.state == Snapshot.CARRIED) {
-                say(TEAM_NAME[t] + " flag dropped");
+                say(TEAM_NAME[t] + " flag dropped", new Color(255, 120, 90));
+                announce(TEAM_NAME[t] + " FLAG DROPPED", new Color(255, 130, 100));
                 Sfx.play("drop");
+                ring(n.x, n.y, t, 0.6, 40);
             } else if (n.state == Snapshot.BASE && o.state == Snapshot.DROPPED) {
-                say(TEAM_NAME[t] + " flag returned");
+                say(TEAM_NAME[t] + " flag returned", Art.FX[t]);
+                announce(TEAM_NAME[t] + " FLAG RETURNED", TEAM[t]);
                 burst(MapData.BASES[t][0], MapData.BASES[t][1], Art.FX[t], 20, 150);
                 beams.add(new double[]{MapData.BASES[t][0], MapData.BASES[t][1] + 12, t, 0.8});
+                ring(MapData.BASES[t][0], MapData.BASES[t][1], t, 0.9, 70);
             }
             int other = 1 - t; // the team that scores by carrying flag t home
             if (b.score[other] > a.score[other]) {
-                say(TEAM_NAME[other] + " captured the flag!");
+                say(TEAM_NAME[other] + " captured the flag!", GOLD);
+                announce(TEAM_NAME[other] + " CAPTURED THE FLAG!", TEAM[other]);
+                scorePop[other] = 1;
+                ring(MapData.BASES[other][0], MapData.BASES[other][1], other, 1.1, 120);
                 Sfx.play("score");
                 burst(MapData.BASES[other][0], MapData.BASES[other][1], Art.FX[other], 60, 280);
                 beams.add(new double[]{MapData.BASES[other][0], MapData.BASES[other][1] + 12, other, 1.4});
@@ -442,9 +477,27 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void say(String s) {
-        feed.add(new Object[]{s, System.nanoTime() + 4_000_000_000L});
+    /** Where the flag was just picked up: the carrier if known, else its base. */
+    private static double[] flagSpot(Snapshot s, Snapshot.F f) {
+        Snapshot.P c = find(s, f.carrier);
+        return c != null ? new double[]{c.x, c.y} : new double[]{f.x, f.y};
+    }
+
+    private void say(String s) { say(s, new Color(150, 140, 190)); }
+
+    private void say(String s, Color c) {
+        feed.add(new Object[]{s, System.nanoTime() + 4_000_000_000L, c});
         if (feed.size() > 5) feed.remove(0);
+    }
+
+    /** Large centre-screen message for the moments that matter. */
+    private void announce(String text, Color c) {
+        notices.add(new Object[]{text, c, 0.0});
+        if (notices.size() > 2) notices.remove(0);
+    }
+
+    private void ring(double x, double y, int team, double life, double radius) {
+        if (rings.size() < 24) rings.add(new double[]{x, y, team, 0, life, radius});
     }
 
     private void addP(double x, double y, double vx, double vy, double life, Color c, int size) {
@@ -454,10 +507,18 @@ public class GamePanel extends JPanel {
         parts.add(p);
     }
 
+    /** Large, faint, growing puff (smoke). */
+    private void addSoft(double x, double y, double vx, double vy, double life, Color c, int size) {
+        if (parts.size() >= MAX_PARTICLES) return;
+        Particle p = new Particle();
+        p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.max = p.life = life; p.c = c; p.size = size; p.soft = true;
+        parts.add(p);
+    }
+
     private void burst(double x, double y, Color c, int n, double speed) {
         for (int i = 0; i < n; i++) {
             double ang = rnd.nextDouble() * Math.PI * 2, sp = speed * (0.3 + rnd.nextDouble() * 0.7);
-            addP(x, y, Math.cos(ang) * sp, Math.sin(ang) * sp, 0.3 + rnd.nextDouble() * 0.4, c, 4);
+            addP(x, y, Math.cos(ang) * sp, Math.sin(ang) * sp, 0.3 + rnd.nextDouble() * 0.4, c, 5);
         }
     }
 
@@ -482,29 +543,53 @@ public class GamePanel extends JPanel {
 
     // ---------- drawing ----------
 
+    /** Tells the panel which part of the world is on screen (world units), so the picture can fill the whole window. */
+    void setView(double x0, double y0, double w, double h) {
+        viewX = x0; viewY = y0; viewW = w; viewH = h;
+        viewSet = true;
+    }
+
+    private int ox() { return (int) Math.round(vX0()); }
+    private int oy() { return (int) Math.round(vY0()); }
+    private double vX0() { return viewSet ? viewX : 0; }
+    private double vY0() { return viewSet ? viewY : 0; }
+    private double vW() { return viewSet ? viewW : (getWidth() > 0 ? getWidth() : MapData.W); }
+    private double vH() { return viewSet ? viewH : (getHeight() > 0 ? getHeight() : MapData.H); }
+
     @Override protected void paintComponent(Graphics g0) {
         super.paintComponent(g0);
         Graphics2D g = (Graphics2D) g0.create();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        // crisp pixel text at the normal size; smooth text once GameView draws the game bigger (full screen)
-        boolean enlarged = g.getTransform().getScaleX() > 1.25;
-        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
-                enlarged ? RenderingHints.VALUE_TEXT_ANTIALIAS_ON : RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR); // crisp pixels
+        paintWorld(g);
+        paintOverlay(g);
+        g.dispose();
+    }
 
+    private double shakeX, shakeY;
+
+    /**
+     * The battlefield: scenery, fighters, bullets, particles. GameView may draw this at a lower resolution than
+     * the screen when the computer is slow; nothing in here is text, so that costs no sharpness.
+     */
+    void paintWorld(Graphics2D g0) {
+        Graphics2D g = (Graphics2D) g0.create();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+
+        // where the local fighter stands, -0.5..0.5 across the arena: drives the parallax layers
+        double camX = predReady ? (pred[0] - MapData.W / 2.0) / MapData.W : 0, camY = predReady ? (pred[1] - MapData.H / 2.0) / MapData.H : 0;
         if (last == null) {
-            drawBackground(g);
-            g.setFont(Art.font(22));
-            Art.textCenter(g, "Waiting for server...", 0, MapData.W, MapData.H / 2, Color.WHITE);
+            scenery.drawBack(g, vX0(), vY0(), vW(), vH(), 0, 0, time, false);
             g.dispose();
             return;
         }
         Snapshot s = last;
         AffineTransform base = g.getTransform();
         double sh = shakeOn ? shake : 0;
-        g.translate((rnd.nextDouble() - 0.5) * sh, (rnd.nextDouble() - 0.5) * sh);
+        shakeX = (rnd.nextDouble() - 0.5) * sh; shakeY = (rnd.nextDouble() - 0.5) * sh;
+        g.translate(shakeX, shakeY);
 
-        drawBackground(g);
+        scenery.drawBack(g, vX0(), vY0(), vW(), vH(), camX, camY, time, fx);
         drawBases(g);
         for (double[] w : MapData.WALLS) Art.wall(g, w);
         drawTorches(g);
@@ -514,10 +599,23 @@ public class GamePanel extends JPanel {
         for (double[] gh : ghosts) drawBullet(g, gh[7], gh[8], Math.atan2(gh[3], gh[2]), (int) gh[4]);
         for (Particle p : parts) {
             Composite old = g.getComposite();
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, Math.min(1, p.life / p.max))));
-            HD.spark(g, p.x, p.y, p.size * 1.2, p.c);
+            float a = (float) Math.max(0, Math.min(1, p.life / p.max));
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, p.soft ? a * 0.35f : a));
+            g.setColor(p.c);
+            if (p.soft) {
+                double r = p.size * (1.6 - a * 0.8);
+                g.fill(new Ellipse2D.Double(p.x - r / 2, p.y - r / 2, r, r));
+            } else g.fill(new Ellipse2D.Double(p.x - p.size / 2.0, p.y - p.size / 2.0, p.size, p.size));
             g.setComposite(old);
         }
+        for (double[] r : rings) { // expanding ground ripples
+            double k = r[3] / r[4], rad = r[5] * (1 - (1 - k) * (1 - k));
+            Color c = r[2] < 0 ? Color.WHITE : Art.FX[(int) r[2]];
+            g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), (int) (200 * (1 - k))));
+            g.setStroke(new BasicStroke((float) (3.5 * (1 - k) + 0.8)));
+            g.draw(new Ellipse2D.Double(r[0] - rad, r[1] + 10 - rad * 0.5, rad * 2, rad));
+        }
+        g.setStroke(new BasicStroke(1));
         for (double[] b : beams) Art.beam(g, b[0], b[1], Art.FX[(int) b[2]], (float) Math.min(1, b[3]));
         if (fx) drawEmbers(g);
 
@@ -530,97 +628,116 @@ public class GamePanel extends JPanel {
             Composite oldComp = g.getComposite();
             g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, sp.life / sp.max)));
             g.setColor(sp.c);
-            g.fillRect((int) sp.x - sp.size / 2, (int) sp.y - sp.size / 2, sp.size, sp.size);
+            g.setStroke(new BasicStroke(sp.size * 0.75f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.draw(new Line2D.Double(sp.x, sp.y, sp.x - sp.vx * 0.045, sp.y - sp.vy * 0.045)); // motion streak
+            g.setColor(Color.WHITE);
+            g.fill(new Ellipse2D.Double(sp.x - sp.size * 0.3, sp.y - sp.size * 0.3, sp.size * 0.6, sp.size * 0.6));
             g.setComposite(oldComp);
         }
-        for (MagicalFlame fl : flames) {
-            Composite oldComp = g.getComposite();
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, fl.life / fl.max)));
-            g.setColor(fl.c);
-            g.fillRect((int) fl.x - fl.size / 2, (int) fl.y - fl.size / 2, fl.size, fl.size);
-            g.setComposite(oldComp);
+        if (fx) for (Object[] b : blooms) Art.glow(g, (Color) b[2], (Double) b[0], (Double) b[1], 120, (float) (0.55 * (1 - (Double) b[3] / 0.4)));
+        if (fx && flames.size() > 20) // the fire lights the whole room
+            for (int i = 0; i < 6; i++) Art.glow(g, new Color(255, 120, 40), vX0() + vW() * (i + 0.5) / 6, vY0() + vH(), 190, (float) (0.28 + 0.08 * Math.sin(time * 7 + i)));
+        g.setStroke(new BasicStroke(1));
+        for (MagicalFlame fl : flames) { // layered flame tongues: flame colour outside, orange and white-hot inside
+            double k = Math.max(0, fl.life / fl.max), sz = fl.size * (0.4 + 0.6 * k), h = sz * 2.0, w = sz * 1.35;
+            double sway = Math.sin(time * 9 + fl.x * 0.1) * sz * 0.25;
+            int al = (int) (215 * Math.min(1, k * 1.8));
+            for (int layer = 0; layer < 3; layer++) {
+                double sc = 1 - layer * 0.34, lh = h * sc, lw = w * sc;
+                Path2D.Double p = new Path2D.Double();
+                p.moveTo(fl.x - lw / 2, fl.y);
+                p.curveTo(fl.x - lw / 2, fl.y - lh * 0.45, fl.x + sway - lw * 0.15, fl.y - lh * 0.72, fl.x + sway, fl.y - lh);
+                p.curveTo(fl.x + sway + lw * 0.15, fl.y - lh * 0.72, fl.x + lw / 2, fl.y - lh * 0.45, fl.x + lw / 2, fl.y);
+                p.closePath();
+                g.setColor(layer == 0 ? new Color(fl.c.getRed(), fl.c.getGreen(), fl.c.getBlue(), al)
+                    : layer == 1 ? new Color(255, 170, 50, (int) (al * 0.9)) : new Color(255, 245, 190, (int) (al * 0.85)));
+                g.fill(p);
+            }
         }
+        scenery.drawFront(g, camX, camY, fx);
         g.setTransform(base);
 
-        if (fx && bg == null) g.drawImage(vignette, 0, 0, null);   // with a background picture the shading is baked into it
-        if (flash > 0) { g.setColor(new Color(255, 0, 0, (int) (110 * flash))); g.fillRect(0, 0, MapData.W, MapData.H); }
-        drawHud(g, s);
-        if (showBoard && s.winner < 0) drawBoard(g, s);
+        if (fx) drawVignette(g);
+        int fx0 = (int) Math.floor(vX0()), fy0 = (int) Math.floor(vY0()), fw = (int) Math.ceil(vW()) + 1, fh = (int) Math.ceil(vH()) + 1;
+        if (flash > 0) { g.setColor(new Color(255, 0, 0, (int) (110 * flash))); g.fillRect(fx0, fy0, fw, fh); }
+        Snapshot.P me = find(s, myId);
+        if (s.winner >= 0 && me != null && me.team != s.winner) { // the losing side sees the match in cold, dim light
+            g.setColor(new Color(10, 12, 40, 80));
+            g.fillRect(fx0, fy0, fw, fh);
+        }
+        g.dispose();
+    }
+
+    /**
+     * Everything that is text or UI: names, HUD, scoreboard, victory and leaderboard. It is always drawn at the
+     * screen's real pixel size (GameView hands in the final graphics), so glyph outlines are rasterised once, at
+     * native resolution, with fractional metrics and kerning, and never resampled.
+     */
+    void paintOverlay(Graphics2D g0) {
+        Graphics2D g = (Graphics2D) g0.create();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        if (last == null) {
+            g.setFont(Type.display(24));
+            Art.textCenter(g, "Waiting for server...", vX0(), vW(), vY0() + vH() / 2, Color.WHITE);
+            g.dispose();
+            return;
+        }
+        Snapshot s = last;
+        AffineTransform hudBase = g.getTransform();
+        g.translate(shakeX, shakeY); // names ride with the shaking battlefield, the HUD does not
+        drawNames(g, s);
+        g.setTransform(hudBase);
+        boolean resultsUp = s.winner >= 0 && ((s.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0) || viewLeaderboardManual);
+        if (!resultsUp) drawHud(g, s); // the results table covers the HUD's place
+        if (showBoard && s.winner < 0) {
+            g.translate(vX0() + (vW() - MapData.W) / 2, vY0() + (vH() - MapData.H) / 2);
+            drawBoard(g, s);
+            g.setTransform(hudBase);
+        }
         if (s.winner >= 0) {
+            g.translate(vX0(), vY0()); // the end screens lay themselves out inside a (0,0,vW,vH) window
             boolean autoLb = (s.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
             if (autoLb || viewLeaderboardManual) {
                 drawPostMatchLeaderboard(g, s);
             } else {
                 drawResponsiveVictory(g, s);
             }
+            g.setTransform(hudBase);
         }
         g.dispose();
     }
 
-    /** The character picture: the original pixel art at the normal size, a smooth version once drawn bigger. */
-    private static java.awt.image.BufferedImage sprite(Graphics2D g, int team, int frame, int worldW, int worldH) {
-        double sc = g.getTransform().getScaleX();
-        return sc > 1.25 ? Art.spriteScaled(team, frame, sc, worldW, worldH) : Art.sprite(team, frame);
+    private void drawNames(Graphics2D g, Snapshot s) {
+        g.setFont(Type.ui(12.5f, true));
+        for (Snapshot.P p : s.players) {
+            double[] xy = renderPos.get(p.id);
+            if (xy == null || !p.alive) continue;
+            Art.namePlate(g, p.name, xy[0], xy[1] + 50, p.team == 0 ? new Color(255, 175, 165) : new Color(185, 230, 255));
+        }
     }
 
-    private void ensureScaledCaches(double sc) {
-        if (bgCache != null && cacheScale == sc) return;
-        cacheScale = sc;
-        int bw = (int) Math.round((MapData.W + 2 * PAD) * sc), bh = (int) Math.round((MapData.H + 2 * PAD) * sc);
-        BufferedImage c = new BufferedImage(bw, bh, BufferedImage.TYPE_INT_RGB);
-        Graphics2D cg = c.createGraphics();
-        cg.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-        cg.drawImage(bg, 0, 0, bw, bh, null);
-        cg.dispose();
-        c = HD.enhanceBackground(c);             // sharpen, light shafts, film grain
-        cg = c.createGraphics();
-        cg.setColor(new Color(6, 6, 18, 120));   // the same darkening as below
-        cg.fillRect(0, 0, bw, bh);
-        cg.dispose();
-        bgCache = c;
-        // the same picture with the dark edge shading already baked in, so it costs nothing per frame
-        BufferedImage v = new BufferedImage(bw, bh, BufferedImage.TYPE_INT_RGB);
-        Graphics2D vg = v.createGraphics();
-        vg.drawImage(c, 0, 0, null);
-        vg.drawImage(Art.vignette((int) Math.round(MapData.W * sc), (int) Math.round(MapData.H * sc)),
-                (int) Math.round(PAD * sc), (int) Math.round(PAD * sc), null);
-        vg.dispose();
-        bgCacheVig = v;
-        fogCache = HD.fogTexture(bw, (int) (bh * 0.36));
-    }
-
-    private void drawBackground(Graphics2D g) {
+    /** Edge shading, made once per window size and zoom. */
+    private void drawVignette(Graphics2D g) {
         double sc = g.getTransform().getScaleX();
-        if (bg != null) {   // the picture prepared once for this size: sharpened, with light shafts and grain
-            ensureScaledCaches(sc);
-            g.drawImage(fx ? bgCacheVig : bgCache, -PAD, -PAD, MapData.W + 2 * PAD, MapData.H + 2 * PAD, null);
-            if (fx && fogCache != null) {   // slow ground fog, drifting sideways
-                int fullW = MapData.W + 2 * PAD;
-                double fogH = fogCache.getHeight() / cacheScale;
-                double drift = (time * 7) % fullW;
-                int fy = (int) (-PAD + (MapData.H + 2 * PAD) - fogH);
-                g.drawImage(fogCache, (int) (-PAD - drift), fy, fullW, (int) fogH, null);
-                g.drawImage(fogCache, (int) (-PAD - drift + fullW), fy, fullW, (int) fogH, null);
-            }
-            return;
+        if (vignetteImg == null || sc != vigScale || vW() != vigW || vH() != vigH) {
+            vigScale = sc; vigW = vW(); vigH = vH();
+            vignetteImg = Art.vignette((int) Math.ceil(vigW * sc), (int) Math.ceil(vigH * sc));
         }
-        if (bg != null) {
-            // the background is a photo-like picture: stretch it smoothly, not into big blocks (sprites stay pixel-crisp)
-            Object old = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(bg, -PAD, -PAD, null);
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, old);
-        }
-        g.setColor(new Color(6, 6, 18, 120)); // darken so players and bullets stay readable
-        g.fillRect(-PAD, -PAD, MapData.W + 2 * PAD, MapData.H + 2 * PAD);
+        Scenery.blit1to1(g, vignetteImg, vX0(), vY0());
     }
 
     /** Team light pools, rune rings and crystals at each home base. */
     private void drawBases(Graphics2D g) {
         for (int t = 0; t < 2; t++) {
             double[] b = MapData.BASES[t];
-            if (fx) Art.glow(g, Art.FX[t], b[0], b[1], 120, 0.28f);
-            HD.baseDisc(g, b[0], b[1], b[2], t);
+            if (fx) Art.glow(g, Art.FX[t], b[0], b[1], 130, 0.30f);
+            g.setColor(new Color(Art.FX[t].getRed(), Art.FX[t].getGreen(), Art.FX[t].getBlue(), 40));
+            g.fill(new Ellipse2D.Double(b[0] - b[2], b[1] - b[2], b[2] * 2, b[2] * 2));
             Stroke old = g.getStroke();
             g.setColor(Art.FX[t]);
             g.setStroke(new BasicStroke(2, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{8, 6}, (float) (t == 0 ? time * 12 % 14 : 14 - time * 12 % 14)));
@@ -632,23 +749,28 @@ public class GamePanel extends JPanel {
 
     private void drawCrystal(Graphics2D g, double x, double y, int t) {
         double pulse = 0.7 + 0.3 * Math.sin(time * 2.5 + x + y);
-        if (fx) Art.glow(g, Art.FX[t], x, y, 34, (float) (0.5 * pulse));
-        HD.crystal(g, x, y, t, pulse);
+        if (fx) Art.glow(g, Art.FX[t], x, y, 38, (float) (0.5 * pulse));
+        Path2D.Double d = new Path2D.Double();
+        d.moveTo(x, y - 14); d.lineTo(x + 8, y - 1); d.lineTo(x, y + 12); d.lineTo(x - 8, y - 1); d.closePath();
+        g.setColor(new Color(20, 14, 40));
+        g.fill(d);
+        g.setColor(new Color(Art.FX[t].getRed(), Art.FX[t].getGreen(), Art.FX[t].getBlue(), (int) (255 * pulse)));
+        g.fill(new Rectangle2D.Double(x - 3, y - 7, 6, 12));
+        g.setColor(Color.WHITE);
+        g.fillRect((int) x - 1, (int) y - 8, 2, 3);
+        g.setColor(new Color(255, 255, 255, 90));
+        g.draw(d);
     }
 
-    /** A flickering torch on top of every wall block. */
+    /** A brazier on top of every wall block. */
     private void drawTorches(Graphics2D g) {
-        for (double[] w : MapData.WALLS) {
-            double x = w[0] + w[2] / 2, y = w[1] - 2;
-            double f = (Math.sin(time * 13 + x) + Math.sin(time * 7.3 + y)) / 2;
-            if (fx) Art.glow(g, new Color(255, 140, 40), x, y - 8, 56, (float) (0.35 + 0.1 * f));
-            HD.torch(g, x, y, f, time);
-        }
+        for (double[] w : MapData.WALLS) Art.torchFlame(g, w[0] + w[2] / 2, w[1] + 3, time, 1.0, fx);
     }
 
     private void drawEmbers(Graphics2D g) {
         for (double[] e : embers) {
-            HD.spark(g, e[0], e[1], 2.4, e[0] < MapData.W / 2 ? new Color(255, 150, 60, 170) : new Color(110, 220, 255, 150));
+            g.setColor(e[0] < MapData.W / 2.0 ? new Color(255, 150, 60, 170) : new Color(110, 220, 255, 150));
+            g.fill(new Ellipse2D.Double(e[0], e[1], 2.4, 2.4));
         }
     }
 
@@ -675,46 +797,55 @@ public class GamePanel extends JPanel {
             Snapshot.F f = s.flags[t];
             double[] xy = f.state == Snapshot.CARRIED ? renderPos.get(f.carrier) : null;
             if (xy == null) continue;
-            if (fx) Art.glow(g, Art.FX[t], xy[0] + 6, xy[1] - 34, 30, 0.45f);
-            Art.flag(g, xy[0] + 4, xy[1] - 34, t, time);
+            if (fx) Art.glow(g, Art.FX[t], xy[0] + 8, xy[1] - 58, 42, 0.5f);
+            Art.flag(g, xy[0] + 5, xy[1] - 58, t, time);
         }
     }
 
+    /**
+     * Fighters are 36x48 world pixels (the old 24x32 at 1.5x). The server's hit circle (radius 14) is centred
+     * on (px, py), which is the fighter's chest: the head rises above the circle and the boots sit just below it.
+     */
     private void drawPlayer(Graphics2D g, Snapshot.P p, double[] xy, boolean mine) {
         double[] a = anim.get(p.id);
         boolean moving = a != null && a[1] > 0;
         double aim = mine ? Math.atan2(mouseY - xy[1], mouseX - xy[0]) : p.aim;
-        if (last != null && last.winner >= 0 && p.team == last.winner && p.alive) {
+        boolean over = last != null && last.winner >= 0;
+        if (over && p.team == last.winner && p.alive) {
             aim = -Math.PI / 2 + Math.sin(time * 5 + p.id) * 0.18; // victorious weapon raise
-            if (fx && rnd.nextInt(3) == 0) addP(xy[0] + (rnd.nextDouble() - 0.5) * 14, xy[1] + 6, (rnd.nextDouble() - 0.5) * 8, -25 - rnd.nextDouble() * 20, 0.4, new Color(180, 80, 255), 3);
+            if (fx && rnd.nextInt(3) == 0) addP(xy[0] + (rnd.nextDouble() - 0.5) * 14, xy[1] + 10, (rnd.nextDouble() - 0.5) * 8, -25 - rnd.nextDouble() * 20, 0.4, new Color(180, 80, 255), 3);
         }
         double px = xy[0], py = xy[1];
+        final double SH = Art.SPR_H * PX;
 
-        AffineTransform shadowBase = g.getTransform(); // soft round shadow, squashed into an ellipse
-        g.translate(px, py + 12.5);
-        g.scale(1, 0.36);
-        g.setPaint(new RadialGradientPaint(new Point2D.Double(0, 0), 14f, new float[]{0f, 1f},
-                new Color[]{new Color(0, 0, 0, 130), new Color(0, 0, 0, 0)}));
-        g.fill(new Ellipse2D.Double(-14, -14, 28, 28));
-        g.setTransform(shadowBase);
+        g.setColor(new Color(0, 0, 0, 110));
+        g.fill(new Ellipse2D.Double(px - 22, py + 19, 44, 14)); // shadow under the boots
         if (!p.alive) {
             Composite old = g.getComposite();
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.75f));
-            HD.fallen(g, p.team, px, py);
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.7f));
+            pixelArt(g, Art.spriteCrisp(p.team, 3, spriteK(g)), px, py + 18, false);
             g.setComposite(old);
             return;
         }
-        g.setColor(mine ? Color.WHITE : Art.FX[p.team]); // team ring under the feet
-        g.setStroke(new BasicStroke(mine ? 2 : 1));
-        g.draw(new Ellipse2D.Double(px - 13, py + 7, 26, 9));
+        double st = spawnT.getOrDefault(p.id, 0.0);
+        float alpha = st > 0 ? (float) (0.25 + 0.75 * (1 - st / 0.7)) * (((int) (time * 30) & 1) == 0 ? 1f : 0.7f) : (over && p.team != last.winner ? 0.7f : 1f);
+        Composite keep = g.getComposite();
+
+        g.setColor(new Color(Art.FX[p.team].getRed(), Art.FX[p.team].getGreen(), Art.FX[p.team].getBlue(), 36)); // team ring under the feet
+        g.fill(new Ellipse2D.Double(px - 25, py + 17, 50, 17));
+        g.setColor(mine ? Color.WHITE : Art.FX[p.team]);
+        g.setStroke(new BasicStroke(mine ? 2 : 1.5f));
+        g.draw(new Ellipse2D.Double(px - 25, py + 17, 50, 17));
         g.setStroke(new BasicStroke(1));
 
         int phase = a == null ? 0 : (int) a[0];
         int frame = moving ? 1 + (phase & 1) : 0;
-        double bob = moving ? ((phase & 1) == 0 ? 0 : -2) : Math.sin(time * 3 + p.id) * 1.2;
+        double bob = moving ? ((phase & 1) == 0 ? 0 : -3.5) : Math.sin(time * 3 + p.id) * 1.8;
         boolean left = Math.cos(aim) < 0;
-        int x0 = (int) px - 12, y0 = (int) (py - 20 + bob);
-        HD.character(g, p.team, frame, px, py + bob, left, time, p.id);
+        double cy0 = py - 5 + bob, y0 = cy0 - SH / 2;
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+        pixelArt(g, Art.spriteCrisp(p.team, frame, spriteK(g)), px, cy0, left);
+        g.setComposite(keep);
 
         // Body energy cycle / magical invulnerability ring
         if (p.shieldSec > 0) {
@@ -722,19 +853,49 @@ public class GamePanel extends JPanel {
         }
 
         double ft = fireT.getOrDefault(p.id, 0.0);
-        int kick = (int) (-3 * Math.min(1, ft / 0.08)); // recoil: the barrel jumps back
-        AffineTransform old = g.getTransform(); // gun
-        g.translate(px, py + 2 + bob);
+        double kick = -4 * Math.min(1, ft / 0.08); // recoil: the barrel jumps back
+        AffineTransform old = g.getTransform();
+        g.translate(px, py - 4 + bob);
         g.rotate(aim);
-        HD.gun(g, p.team, kick, ft > 0, left);
+        g.scale(GUN_SCALE, GUN_SCALE);
+        if (left) g.scale(1, -1); // keeps the grip underneath when aiming leftwards
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+        Art.gun(g, p.team, kick, ft > 0);
+        g.setComposite(keep);
         g.setTransform(old);
-        if (ft > 0 && fx) Art.glow(g, Art.FX[p.team], px + Math.cos(aim) * 28, py + 2 + bob + Math.sin(aim) * 28, 24, 0.9f);
+        if (ft > 0 && fx) Art.glow(g, Art.FX[p.team], px + Math.cos(aim) * 44, py - 4 + bob + Math.sin(aim) * 44, 38, 0.9f);
 
-        g.setFont(Art.font(10));
-        int tagW = g.getFontMetrics().stringWidth(p.name) + 10; // a dark pill behind the name keeps it readable
-        g.setColor(new Color(4, 4, 14, 125));
-        g.fill(new RoundRectangle2D.Double(px - tagW / 2.0, y0 - 16, tagW, 14, 8, 8));
-        Art.textCenter(g, p.name, (int) px - 40, 80, y0 - 5, p.team == 0 ? new Color(255, 160, 150) : new Color(170, 225, 255));
+        if (mine && !isCarrier(p.id)) { // bobbing chevron marks the local fighter
+            double cy = y0 - 12 + Math.sin(time * 4) * 2;
+            Path2D.Double ch = new Path2D.Double();
+            ch.moveTo(px - 8, cy - 8); ch.lineTo(px + 8, cy - 8); ch.lineTo(px, cy + 3); ch.closePath();
+            g.setColor(new Color(0, 0, 0, 120));
+            g.fill(new AffineTransform(1, 0, 0, 1, 1, 1).createTransformedShape(ch));
+            g.setColor(Color.WHITE);
+            g.fill(ch);
+        }
+    }
+
+    /** World units per sprite pixel: fighters are 43x58 world units (the original 24x32 at 1.8x). */
+    static final double PX = 2.4, GUN_SCALE = 1.2;
+
+    /** Whole screen pixels per sprite pixel, so each one stays a crisp square. */
+    private static int spriteK(Graphics2D g) { return Math.max(1, (int) Math.round(PX * g.getTransform().getScaleX())); }
+
+    /** Copies a pre-scaled pixel-art image to the screen 1:1, centred on world point (cx, cy), optionally mirrored. */
+    private static void pixelArt(Graphics2D g, BufferedImage im, double cx, double cy, boolean mirror) {
+        AffineTransform at = g.getTransform();
+        int w = im.getWidth(), h = im.getHeight();
+        int dx = (int) Math.round(at.getTranslateX() + cx * at.getScaleX() - w / 2.0), dy = (int) Math.round(at.getTranslateY() + cy * at.getScaleY() - h / 2.0);
+        g.setTransform(new AffineTransform());
+        if (mirror) g.drawImage(im, dx + w, dy, -w, h, null); else g.drawImage(im, dx, dy, null);
+        g.setTransform(at);
+    }
+
+    private boolean isCarrier(int id) {
+        if (last == null) return false;
+        for (Snapshot.F f : last.flags) if (f.state == Snapshot.CARRIED && f.carrier == id) return true;
+        return false;
     }
 
     /** Travel direction of a server bullet, from where it was one snapshot ago; 0 if it just spawned. */
@@ -746,62 +907,146 @@ public class GamePanel extends JPanel {
         return 0;
     }
 
-    /** Glowing energy bolt; its bright core is exactly at (x, y), the collision position. */
+    /** Glowing energy bolt with a fading tail; its bright core is exactly at (x, y), the collision position. */
     private void drawBullet(Graphics2D g, double x, double y, double ang, int t) {
-        if (fx) Art.glow(g, Art.FX[t], x, y, 16, 0.7f);
-        HD.bolt(g, x, y, ang, t, time);
+        if (fx) Art.glow(g, Art.FX[t], x, y, 30, 0.8f);
+        AffineTransform old = g.getTransform();
+        g.translate(x, y);
+        g.rotate(ang);
+        Color c = Art.FX[t];
+        if (fx) {
+            g.setPaint(new GradientPaint(-52, 0, new Color(c.getRed(), c.getGreen(), c.getBlue(), 0), 0, 0, new Color(c.getRed(), c.getGreen(), c.getBlue(), 190)));
+            g.fill(new Rectangle2D.Double(-52, -4, 52, 8));
+        }
+        double len = 21 + Math.sin(time * 40);
+        g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 90));
+        g.fill(new RoundRectangle2D.Double(-len / 2 - 5, -7, len + 6, 14, 14, 14)); // soft halo
+        g.setColor(c);
+        g.fill(new RoundRectangle2D.Double(-len / 2 - 3, -4.5, len, 9, 9, 9));
+        g.setColor(Color.WHITE);
+        g.fill(new RoundRectangle2D.Double(-3, -2.2, 12, 4.4, 4.4, 4.4));
+        g.setTransform(old);
     }
 
     // ---------- HUD ----------
 
+    private static final Color GOLD = new Color(255, 205, 90);
+
     private void drawHud(Graphics2D g, Snapshot s) {
         Snapshot.P me = find(s, myId);
         int mt = me == null ? 0 : me.team;
+        final double x0 = vX0(), y0 = vY0(), w = vW(), h = vH(), cx = x0 + w / 2;
+        final double PW = 192, PH = 46, TW = 100, GAP = 8, top = y0 + 22;
 
-        g.setFont(Art.font(20));
-        Art.panel(g, 240, 8, 130, 34, TEAM[0]);
-        Art.textCenter(g, "RED  " + s.score[0], 240, 130, 32, TEAM[0]);
-        Art.panel(g, 430, 8, 130, 34, TEAM[1]);
-        Art.textCenter(g, s.score[1] + "  BLUE", 430, 130, 32, TEAM[1]);
-        Art.panel(g, 372, 8, 56, 34, Art.BORDER);
-        g.setFont(Art.font(15));
-        Art.textCenter(g, String.format("%d:%02d", s.timeLeftSec / 60, s.timeLeftSec % 60), 372, 56, 30, Color.WHITE);
+        // top centre: red score | timer | blue score
+        boolean low = s.timeLeftSec <= 30 && s.winner < 0;
+        Color timerC = low ? new Color(255, 80, 80) : new Color(170, 150, 235);
+        Art.plate(g, cx - TW / 2, top - 4, TW, PH + 8, 12, timerC, time, fx);
+        g.setFont(Type.numbers(31));
+        Color tc = low && ((int) (time * 3) & 1) == 0 ? new Color(255, 120, 110) : Color.WHITE;
+        Art.textCenter(g, String.format("%d:%02d", s.timeLeftSec / 60, s.timeLeftSec % 60), (int) (cx - TW / 2), (int) TW, (int) (top + PH / 2 + 10), tc);
 
-        g.setFont(Art.font(11)); // real flag state for each team
         for (int t = 0; t < 2; t++) {
-            Snapshot.F f = s.flags[t];
-            String st = f.state == Snapshot.BASE ? "flag: home" : f.state == Snapshot.CARRIED ? "flag: taken" : "flag: dropped";
-            Color c = f.state == Snapshot.BASE ? new Color(170, 175, 195) : f.state == Snapshot.CARRIED ? new Color(255, 200, 80) : new Color(255, 120, 90);
-            Art.panel(g, t == 0 ? 240 : 430, 46, 130, 20, TEAM[t]);
-            Art.textCenter(g, st, t == 0 ? 240 : 430, 130, 60, c);
+            double px = t == 0 ? cx - TW / 2 - GAP - PW : cx + TW / 2 + GAP;
+            Art.plate(g, px, top, PW, PH, 9, TEAM[t], time, fx);
+            Snapshot.F f = s.flags[t]; // this team's own flag
+            boolean home = f.state == Snapshot.BASE, taken = f.state == Snapshot.CARRIED;
+            Color ic = home ? TEAM[t] : taken ? GOLD : (((int) (time * 4) & 1) == 0 ? new Color(255, 110, 80) : new Color(255, 180, 150));
+            double iconX = t == 0 ? px + 24 : px + PW - 24;
+            if (!home && fx) Art.glow(g, ic, iconX, top + PH / 2, 22, 0.5f);
+            Art.flagIcon(g, iconX, top + PH / 2, 26, ic, time);
+            String name = TEAM_NAME[t], st = home ? "FLAG SAFE" : taken ? "FLAG TAKEN" : "FLAG DROPPED";
+            Color stc = home ? new Color(170, 175, 195) : taken ? GOLD : new Color(255, 130, 100);
+            g.setFont(Art.title(15));
+            FontMetrics fm = g.getFontMetrics();
+            double nx = t == 0 ? px + 46 : px + PW - 46 - fm.getStringBounds(name, g).getWidth();
+            Art.text(g, name, nx, top + 19, TEAM[t]);
+            g.setFont(Type.ui(10.5f, true));
+            double stw = g.getFontMetrics().getStringBounds(st, g).getWidth();
+            Art.text(g, st, t == 0 ? px + 46 : px + PW - 46 - stw, top + 35, stc);
+
+            AffineTransform keep = g.getTransform(); // score, bouncing when the team captures
+            g.setFont(Type.numbers(35));
+            String sc = String.valueOf(s.score[t]);
+            fm = g.getFontMetrics();
+            double sx = t == 0 ? px + PW - 18 - fm.getStringBounds(sc, g).getWidth() / 2.0 : px + 18 + fm.getStringBounds(sc, g).getWidth() / 2.0, sy = top + 35;
+            g.translate(sx, sy - 11);
+            double k = 1 + 0.5 * scorePop[t];
+            g.scale(k, k);
+            if (scorePop[t] > 0 && fx) Art.glow(g, TEAM[t], 0, 0, 30, (float) (0.8 * scorePop[t]));
+            Art.text(g, sc, -fm.getStringBounds(sc, g).getWidth() / 2, 12, scorePop[t] > 0 ? Color.WHITE : TEAM[t].brighter());
+            g.setTransform(keep);
         }
 
-        Art.panel(g, 8, 8, 200, 48, TEAM[mt]);
-        g.setFont(Art.font(13));
-        Art.text(g, "YOU: " + TEAM_NAME[mt] + " TEAM", 18, 28, TEAM[mt]);
-        g.setFont(Art.font(11));
+        // top left: who you are
+        double redX = cx - TW / 2 - GAP - PW, iy = x0 + 14 + 196 < redX - 6 ? top : top + PH + 8; // narrow windows: tuck it under the red score
+        Art.plate(g, x0 + 14, iy, 196, PH, 9, TEAM[mt], time, fx);
+        g.setFont(Art.title(15));
+        Art.text(g, "YOU - " + TEAM_NAME[mt] + " TEAM", (int) x0 + 28, (int) iy + 19, TEAM[mt].brighter());
+        g.setFont(Type.ui(11.5f, true));
         int ping = link.pingMs();
-        Art.text(g, "PING " + ping + "ms" + (link.lagSimOn() ? "  LAG SIM" : ""), 18, 46, ping > 150 ? Color.ORANGE : new Color(170, 175, 195));
+        String stats = me == null ? "" : "  K " + me.tags + "  C " + me.captures;
+        Art.text(g, "PING " + ping + "ms" + (link.lagSimOn() ? " LAG" : "") + stats, (int) x0 + 28, (int) iy + 36, ping > 150 ? Color.ORANGE : new Color(170, 175, 195));
 
-        g.setFont(Art.font(11));
-        Art.text(g, "WASD move  MOUSE aim/shoot  TAB board  F fx " + (fx ? "on" : "off") + "  V shake " + (shakeOn ? "on" : "off") + "  L lag", 10, MapData.H - 10, new Color(255, 255, 255, 120));
+        // bottom left: compact controls guide
+        g.setFont(Type.ui(11.5f, false));
+        Art.textCenter(g, "WASD move   MOUSE aim/fire   TAB scores   F11 fullscreen   F fx " + (fx ? "on" : "off") + "   V shake " + (shakeOn ? "on" : "off") + "   L lag",
+            x0, w, y0 + h - 10, new Color(235, 232, 255, 200));
 
-        int y = MapData.H - 34 - feed.size() * 24;
-        for (Object[] f : feed) {
+        // event feed
+        g.setFont(Type.ui(12.5f, true));
+        int n = feed.size();
+        for (int i = 0; i < n; i++) {
+            Object[] f = feed.get(i);
             String t = (String) f[0];
-            int w = g.getFontMetrics().stringWidth(t) + 16;
-            Art.panel(g, 8, y += 24, w, 20, Art.BORDER);
-            Art.text(g, t, 16, y + 14, Color.WHITE);
+            Color fc = (Color) f[2];
+            double fw = g.getFontMetrics().stringWidth(t) + 26, fy = y0 + h - 52 - (n - 1 - i) * 26;
+            Path2D.Double pl = Art.chamfer(x0 + 14, fy, fw, 21, 5);
+            g.setColor(new Color(6, 6, 18, 190));
+            g.fill(pl);
+            g.setColor(fc);
+            g.fillRect((int) x0 + 14, (int) fy + 3, 3, 15);
+            g.setStroke(new BasicStroke(1f));
+            g.setColor(new Color(fc.getRed(), fc.getGreen(), fc.getBlue(), 120));
+            g.draw(pl);
+            Art.text(g, t, (int) x0 + 24, (int) fy + 15, Color.WHITE);
         }
 
+        // big announcements: slide in under the timer, fade out
+        for (int i = 0; i < notices.size(); i++) {
+            Object[] nt = notices.get(i);
+            double age = (Double) nt[2];
+            float a = (float) Math.min(1, Math.min(age / 0.15, (2.6 - age) / 0.6));
+            if (a <= 0) continue;
+            Color c = (Color) nt[1];
+            double ny = top + PH + 36 + (notices.size() - 1 - i) * 40 + (1 - Math.min(1, age / 0.2)) * -10;
+            g.setFont(Art.title(26));
+            FontMetrics fm = g.getFontMetrics();
+            double bw = fm.stringWidth((String) nt[0]) + 120;
+            Composite keep = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a));
+            g.setPaint(new LinearGradientPaint((float) (cx - bw / 2), 0, (float) (cx + bw / 2), 0, new float[]{0f, 0.2f, 0.8f, 1f},
+                new Color[]{new Color(4, 4, 16, 0), new Color(4, 4, 16, 190), new Color(4, 4, 16, 190), new Color(4, 4, 16, 0)}));
+            g.fill(new Rectangle2D.Double(cx - bw / 2, ny - 27, bw, 38));
+            g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 200));
+            g.fill(new Rectangle2D.Double(cx - bw * 0.4, ny - 28, bw * 0.8, 1.5));
+            g.fill(new Rectangle2D.Double(cx - bw * 0.4, ny + 10, bw * 0.8, 1.5));
+            Art.textCenter(g, (String) nt[0], (int) (cx - bw / 2), (int) bw, (int) ny, c.brighter());
+            g.setComposite(keep);
+        }
+
+        // bottom centre: personal status
         String banner = null;
         for (Snapshot.F f : s.flags) if (f.state == Snapshot.CARRIED && f.carrier == myId) banner = "YOU HAVE THE FLAG - RUN HOME";
         if (me != null && !me.alive) banner = "ELIMINATED - RESPAWNING";
-        if (banner != null) {
-            g.setFont(Art.font(16));
-            int w = g.getFontMetrics().stringWidth(banner) + 28;
-            Art.panel(g, (MapData.W - w) / 2, MapData.H - 86, w, 30, banner.startsWith("YOU") ? new Color(255, 200, 80) : TEAM[mt]);
-            Art.textCenter(g, banner, (MapData.W - w) / 2, w, MapData.H - 66, Color.WHITE);
+        if (banner != null && s.winner < 0) {
+            g.setFont(Art.title(18));
+            int bw = g.getFontMetrics().stringWidth(banner) + 44;
+            boolean good = banner.startsWith("YOU");
+            Color bc = good ? GOLD : TEAM[mt];
+            if (good) bc = ((int) (time * 3) & 1) == 0 ? GOLD : new Color(255, 235, 170);
+            Art.plate(g, cx - bw / 2.0, y0 + h - 78, bw, 34, 9, bc, time, fx);
+            Art.textCenter(g, banner, (int) (cx - bw / 2.0), bw, (int) (y0 + h - 55), Color.WHITE);
         }
     }
 
@@ -822,8 +1067,8 @@ public class GamePanel extends JPanel {
     }
 
     private void drawResponsiveVictory(Graphics2D g, Snapshot s) {
-        int vw = getWidth() > 0 ? getWidth() : MapData.W;
-        int vh = getHeight() > 0 ? getHeight() : MapData.H;
+        int vw = (int) Math.round(vW());
+        int vh = (int) Math.round(vH());
 
         // Cinematic soft translucent dark veil (lets arena, players & fireworks shine through!)
         g.setColor(new Color(4, 2, 14, 115));
@@ -852,7 +1097,7 @@ public class GamePanel extends JPanel {
 
         // 2. Frosted transparent glassy window!
         Art.glassCard(g, cardX, cardY, cardW, cardH, accent, time, fx, hoverPlayAgain);
-        btnPlayAgainBounds.setBounds(cardX, cardY, cardW, cardH);
+        btnPlayAgainBounds.setBounds(cardX + ox(), cardY + oy(), cardW, cardH);
 
         // 3. Decorative mystical flame braziers at the outer sides of the glass window
         Art.flameBrazier(g, cardX - 16, cardY + cardH - 14, accent, time, fx);
@@ -904,35 +1149,26 @@ public class GamePanel extends JPanel {
         // 5. Majestic display of the only word: "VICTORY"
         String vicText = "VICTORY";
         int fontSize = Math.min(74, Math.max(50, (int)(cardW * 0.175)));
-        Font vicFont = new Font(Font.SERIF, Font.BOLD, fontSize);
+        Font vicFont = Type.heading(fontSize);
         g.setFont(vicFont);
         FontMetrics fm = g.getFontMetrics();
-        int strW = fm.stringWidth(vicText);
+        java.awt.font.TextLayout tl = new java.awt.font.TextLayout(vicText, vicFont, g.getFontRenderContext());
+        int strW = (int) Math.round(tl.getAdvance());
         int strX = cardX + (cardW - strW) / 2;
         int strY = (int) vicCenterY + fm.getAscent() / 2 - 4;
-
-        // Layer A: Deep shadow
-        g.setColor(new Color(6, 2, 14, 230));
-        g.drawString(vicText, strX, strY + 5);
-
-        // Layer B: Violet ambient rim shadow
-        g.setColor(new Color(110, 30, 200, 190));
-        g.drawString(vicText, strX, strY + 2);
-        g.drawString(vicText, strX + 1, strY + 1);
-
-        // Layer C: Crystalline iridescent vertical gradient
-        Paint oldPaint = g.getPaint();
-        GradientPaint vicGrad = new GradientPaint(
-            strX, strY - fm.getAscent(), Color.WHITE,
-            strX, strY + 2, accent
-        );
-        g.setPaint(vicGrad);
-        g.drawString(vicText, strX, strY);
-
-        // Layer D: Crisp top bevel specular sheen
-        g.setColor(new Color(255, 255, 255, 210));
-        g.drawString(vicText, strX, strY - 1);
-        g.setPaint(oldPaint);
+        // drawn as vector outlines (kerned, letter-spaced), so the edges are smooth at any resolution
+        Shape letters = tl.getOutline(AffineTransform.getTranslateInstance(strX, strY));
+        g.setColor(new Color(6, 2, 14, 210)); // deep shadow
+        g.fill(AffineTransform.getTranslateInstance(0, 4.5).createTransformedShape(letters));
+        g.setStroke(new BasicStroke(3.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(new Color(120, 38, 214, 215)); // violet rim
+        g.draw(letters);
+        g.setPaint(new GradientPaint(strX, strY - fm.getAscent(), Color.WHITE, strX, strY + 2, accent)); // iridescent face
+        g.fill(letters);
+        g.setStroke(new BasicStroke(0.9f));
+        g.setColor(new Color(255, 255, 255, 170)); // specular edge
+        g.draw(letters);
+        g.setStroke(new BasicStroke(1f));
 
         // Layer E: Sparkling diamond star glints on the letters
         Art.starGlint(g, strX + fm.charWidth('V') * 0.25, strY - fm.getAscent() * 0.88, time, 8);
@@ -944,7 +1180,7 @@ public class GamePanel extends JPanel {
         int toggleH = 28;
         int toggleX = cardX + (cardW - toggleW) / 2;
         int toggleY = Math.min(vh - 36, cardY + cardH + 10);
-        btnLeaderboardToggle.setBounds(toggleX, toggleY, toggleW, toggleH);
+        btnLeaderboardToggle.setBounds(toggleX + ox(), toggleY + oy(), toggleW, toggleH);
 
         double elapsed = s.matchEndElapsedSec > 0 ? s.matchEndElapsedSec : victoryTimer;
         int secRemaining = Math.max(0, (int) Math.ceil(60.0 - elapsed));
@@ -963,8 +1199,8 @@ public class GamePanel extends JPanel {
     }
 
     private void drawPostMatchLeaderboard(Graphics2D g, Snapshot s) {
-        int vw = getWidth() > 0 ? getWidth() : MapData.W;
-        int vh = getHeight() > 0 ? getHeight() : MapData.H;
+        int vw = (int) Math.round(vW());
+        int vh = (int) Math.round(vH());
 
         // Cinematic dark backdrop so fireworks and torches shine through softly
         g.setColor(new Color(4, 2, 14, 175));
@@ -984,7 +1220,7 @@ public class GamePanel extends JPanel {
         // 1. Header with Golden Crown and Match Results Title
         Art.crown(g, cardX + cardW / 2.0, cardY + 22, Color.YELLOW, 22, time);
 
-        g.setFont(new Font(Font.SERIF, Font.BOLD, Math.min(22, (int)(cardW * 0.045))));
+        g.setFont(Type.display(Math.min(22, (int)(cardW * 0.045))));
         String headerTitle = "MATCH RESULTS & BATTLE STATISTICS";
         FontMetrics fmH = g.getFontMetrics();
         int thX = cardX + (cardW - fmH.stringWidth(headerTitle)) / 2;
@@ -994,7 +1230,7 @@ public class GamePanel extends JPanel {
         g.drawString(headerTitle, thX, cardY + 46);
 
         String verdict = (winner == 1 ? "BLUE" : "RED") + " TEAM TRIUMPHANT";
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        g.setFont(Type.ui(13, true));
         FontMetrics fmV = g.getFontMetrics();
         g.setColor(TEAM[winner]);
         g.drawString(verdict, cardX + (cardW - fmV.stringWidth(verdict)) / 2, cardY + 64);
@@ -1034,18 +1270,18 @@ public class GamePanel extends JPanel {
                 Art.crown(g, tx + 18, ty + 18, Color.YELLOW, 16, time);
             }
 
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+            g.setFont(Type.ui(13, true));
             g.setColor(tc);
             g.drawString(TEAM_NAME[t] + " TEAM" + (won ? "  * WINNER" : ""), tx + (won ? 32 : 14), ty + 20);
 
             // Team Score badge
             String scoreStr = "SCORE: " + s.score[t];
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+            g.setFont(Type.ui(13, true));
             g.setColor(Color.WHITE);
             g.drawString(scoreStr, tx + teamW - g.getFontMetrics().stringWidth(scoreStr) - 14, ty + 20);
 
             // Metrics row: KILLS, DEATHS, CAPTURES
-            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+            g.setFont(Type.ui(11, false));
             int colW = (teamW - 24) / 3;
             String[] labels = {"KILLS", "DEATHS", "CAPTURES"};
             int[] vals = {teamKills[t], teamDeaths[t], teamCaps[t]};
@@ -1053,10 +1289,10 @@ public class GamePanel extends JPanel {
                 int cx = tx + 12 + m * colW;
                 g.setColor(new Color(160, 165, 185));
                 g.drawString(labels[m], cx, ty + 42);
-                g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 15));
+                g.setFont(Type.ui(15, true));
                 g.setColor(Color.WHITE);
                 g.drawString(String.valueOf(vals[m]), cx, ty + 62);
-                g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+                g.setFont(Type.ui(11, false));
             }
         }
 
@@ -1072,7 +1308,7 @@ public class GamePanel extends JPanel {
         g.setStroke(new BasicStroke(1.0f));
         g.drawRoundRect(tableX, tableY, tableW, 26, 8, 8);
 
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+        g.setFont(Type.ui(11, true));
         g.setColor(new Color(210, 205, 235));
         int cRank = tableX + 8;
         int cPlayer = tableX + 64;
@@ -1120,24 +1356,24 @@ public class GamePanel extends JPanel {
             Art.medalBadge(g, cRank, ry + 3, rank);
 
             // Player name with (YOU) indicator
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+            g.setFont(Type.ui(12, true));
             boolean isMe = (p.id == myId);
             g.setColor(isMe ? Color.WHITE : new Color(220, 225, 240));
             String pName = p.name + (isMe ? " (YOU)" : "");
             g.drawString(pName, cPlayer, ry + 19);
 
             // Team tag
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+            g.setFont(Type.ui(11, true));
             g.setColor(TEAM[p.team]);
             g.drawString(p.team == 0 ? "RED" : "BLUE", cTeam, ry + 19);
 
             // Score
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+            g.setFont(Type.ui(12, true));
             g.setColor(new Color(255, 235, 140));
             g.drawString(String.valueOf(p.score), cScore, ry + 19);
 
             // Kills, Deaths, Captures
-            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+            g.setFont(Type.ui(12, false));
             g.setColor(Color.WHITE);
             g.drawString(String.valueOf(p.tags), cKills, ry + 19);
             g.drawString(String.valueOf(p.deaths), cDeaths, ry + 19);
@@ -1151,8 +1387,8 @@ public class GamePanel extends JPanel {
 
         int btn1X = cardX + (cardW - (btnW * 2 + 16)) / 2;
         int btn2X = btn1X + btnW + 16;
-        btnLeaderboardPlayAgain.setBounds(btn1X, btnY, btnW, btnH);
-        btnLeaderboardBack.setBounds(btn2X, btnY, btnW, btnH);
+        btnLeaderboardPlayAgain.setBounds(btn1X + ox(), btnY + oy(), btnW, btnH);
+        btnLeaderboardBack.setBounds(btn2X + ox(), btnY + oy(), btnW, btnH);
 
         // Button 1: Play Again
         Color b1Fill = hoverLeaderboardPlayAgain ? new Color(130, 50, 210, 230) : new Color(60, 25, 100, 200);
@@ -1162,7 +1398,7 @@ public class GamePanel extends JPanel {
         g.setColor(b1Border);
         g.setStroke(new BasicStroke(hoverLeaderboardPlayAgain ? 2.0f : 1.2f));
         g.drawRoundRect(btn1X, btnY, btnW, btnH, 16, 16);
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        g.setFont(Type.ui(13, true));
         Art.textCenter(g, "PLAY AGAIN", btn1X, btnW, btnY + 22, Color.WHITE);
 
         // Button 2: View Celebration
@@ -1177,42 +1413,37 @@ public class GamePanel extends JPanel {
     }
 
     private void triggerOpeningCelebration(int winner) {
-        int vw = getWidth() > 0 ? getWidth() : MapData.W;
-        int vh = getHeight() > 0 ? getHeight() : MapData.H;
+        double wx = vX0(), wy = vY0(), vw = vW(), vh = vH();
         Color teamC = TEAM[winner];
         Color purple = new Color(170, 60, 255);
-        burst(vw / 2.0, vh / 2.0, purple, 45, 260);
-        burst(vw / 2.0, vh / 2.0, teamC, 35, 220);
-        launchRocket(vw * 0.25, vh, -25, -360, winner);
-        launchRocket(vw * 0.75, vh, 25, -360, winner);
-        launchRocket(vw * 0.50, vh, 0, -390, winner);
-        nextRocketTime = 0.5;
+        burst(wx + vw / 2, wy + vh / 2, purple, 70, 340);
+        burst(wx + vw / 2, wy + vh / 2, teamC, 60, 300);
+        burst(wx + vw / 2, wy + vh / 2, new Color(255, 200, 90), 50, 380);
+        ring(wx + vw / 2, wy + vh / 2 - 10, winner, 1.4, 260);
+        for (int i = 0; i < 9; i++) // an opening salvo across the whole width
+            launchRocket(wx + vw * (0.08 + 0.84 * i / 8.0), wy + vh, (i - 4) * 14, -470 - rnd.nextDouble() * 120, winner);
+        nextRocketTime = 0.7;
     }
 
     private void launchRocket(double x, double y, double vx, double vy, int team) {
         FireworkRocket r = new FireworkRocket();
         r.x = x; r.y = y; r.vx = vx; r.vy = vy;
-        r.fuse = 0.7 + rnd.nextDouble() * 0.4;
+        r.fuse = 0.75 + rnd.nextDouble() * 0.5;
         r.team = team;
-        r.c = team == 1 ? (rnd.nextBoolean() ? new Color(60, 220, 255) : new Color(170, 70, 255))
-                        : (rnd.nextBoolean() ? new Color(255, 70, 90) : new Color(170, 70, 255));
+        double k = rnd.nextDouble();
+        r.c = k < 0.34 ? new Color(170, 70, 255) : k < 0.67 ? (team == 1 ? new Color(60, 220, 255) : new Color(255, 70, 90)) : new Color(255, 190, 80);
         rockets.add(r);
     }
 
+    /** Fireworks keep going for the whole victory screen; fire rises along the bottom and beside the card. */
     private void stepCelebration(double dt, int winner) {
-        int vw = getWidth() > 0 ? getWidth() : MapData.W;
-        int vh = getHeight() > 0 ? getHeight() : MapData.H;
+        double vw = vW(), vh = vH(), wx = vX0(), wy = vY0();
 
-        if (victoryTimer < 7.0 && victoryTimer >= nextRocketTime) {
-            nextRocketTime += 0.55 + rnd.nextDouble() * 0.4;
-            double rx = vw * (0.15 + rnd.nextDouble() * 0.7);
-            double rvx = (rnd.nextDouble() - 0.5) * 80;
-            double rvy = -340 - rnd.nextDouble() * 100;
-            launchRocket(rx, vh, rvx, rvy, winner);
-            if (rnd.nextDouble() < 0.45) {
-                double rx2 = vw * (0.15 + rnd.nextDouble() * 0.7);
-                launchRocket(rx2, vh, (rnd.nextDouble() - 0.5) * 80, -340 - rnd.nextDouble() * 100, winner);
-            }
+        if (victoryTimer < 58.0 && victoryTimer >= nextRocketTime) {
+            nextRocketTime += 0.14 + rnd.nextDouble() * 0.22;
+            int n = 1 + rnd.nextInt(3);
+            for (int i = 0; i < n; i++)
+                launchRocket(wx + vw * (0.06 + rnd.nextDouble() * 0.88), wy + vh, (rnd.nextDouble() - 0.5) * 120, -430 - rnd.nextDouble() * 170, winner);
         }
 
         for (Iterator<FireworkRocket> it = rockets.iterator(); it.hasNext(); ) {
@@ -1221,7 +1452,8 @@ public class GamePanel extends JPanel {
             r.x += r.vx * dt;
             r.y += r.vy * dt;
             r.vy += 90 * dt;
-            addSpark(r.x, r.y, (rnd.nextDouble() - 0.5) * 20, rnd.nextDouble() * 30 + 10, 0.25, new Color(255, 220, 150), 2);
+            addSpark(r.x, r.y, (rnd.nextDouble() - 0.5) * 24, rnd.nextDouble() * 40 + 10, 0.35, new Color(255, 220, 150), 3);
+            addSpark(r.x, r.y, (rnd.nextDouble() - 0.5) * 24, rnd.nextDouble() * 40 + 10, 0.25, r.c, 2);
             if (r.fuse <= 0) {
                 detonateRocket(r);
                 it.remove();
@@ -1234,76 +1466,72 @@ public class GamePanel extends JPanel {
             s.x += s.vx * dt;
             s.y += s.vy * dt;
             s.vy += 85 * dt;
-            s.vx *= 0.97;
+            s.vx *= 0.975;
             if (s.life <= 0) it.remove();
         }
 
-        int cardW = Math.min(520, Math.max(340, vw - 48));
-        int cardH = Math.min(380, Math.max(260, vh - 56));
-        int cardX = (vw - cardW) / 2;
-        int cardY = (vh - cardH) / 2;
-
-        Color flameC = winner == 1 ? new Color(60, 220, 255) : new Color(255, 70, 90);
-        Color purpleC = new Color(170, 60, 255);
-        if (flames.size() < 120 && rnd.nextInt(2) == 0) {
-            addFlame(cardX + 32 + (rnd.nextDouble() - 0.5) * 12, cardY + cardH - 18, (rnd.nextDouble() - 0.5) * 18, -40 - rnd.nextDouble() * 40, 0.5 + rnd.nextDouble() * 0.4, rnd.nextBoolean() ? purpleC : flameC, 3);
-            addFlame(cardX + cardW - 32 + (rnd.nextDouble() - 0.5) * 12, cardY + cardH - 18, (rnd.nextDouble() - 0.5) * 18, -40 - rnd.nextDouble() * 40, 0.5 + rnd.nextDouble() * 0.4, rnd.nextBoolean() ? purpleC : flameC, 3);
-            addFlame(cardX + cardW * (0.2 + rnd.nextDouble() * 0.6), cardY + cardH - 30, (rnd.nextDouble() - 0.5) * 14, -25 - rnd.nextDouble() * 30, 0.8 + rnd.nextDouble() * 0.6, purpleC, 2);
+        // a wall of fire along the bottom of the screen, in orange, red, gold and the winners' colour
+        Color teamC = winner == 1 ? new Color(60, 220, 255) : new Color(255, 70, 90);
+        Color[] fire = {new Color(255, 120, 30), new Color(255, 70, 30), new Color(255, 120, 30), new Color(255, 190, 60), teamC, new Color(170, 60, 255)};
+        int spawn = (int) Math.ceil(dt * 200);
+        for (int i = 0; i < spawn; i++)
+            addFlame(wx + rnd.nextDouble() * vw, wy + vh + 6, (rnd.nextDouble() - 0.5) * 30, -90 - rnd.nextDouble() * 120,
+                0.8 + rnd.nextDouble() * 1.0, fire[rnd.nextInt(fire.length)], 13 + rnd.nextInt(14));
+        int cardW = (int) Math.min(520, Math.max(340, vw - 48)), cardH = (int) Math.min(380, Math.max(260, vh - 56));
+        double cardX = (vw - cardW) / 2 + wx, cardY = (vh - cardH) / 2 + wy;
+        for (int i = 0; i < Math.max(1, spawn / 2); i++) { // tall columns of flame on both sides of the victory panel
+            double side = rnd.nextBoolean() ? cardX - 18 : cardX + cardW + 18;
+            addFlame(side + (rnd.nextDouble() - 0.5) * 22, cardY + cardH - 14, (rnd.nextDouble() - 0.5) * 24, -70 - rnd.nextDouble() * 110,
+                0.7 + rnd.nextDouble() * 0.8, rnd.nextBoolean() ? new Color(170, 60, 255) : teamC, 10 + rnd.nextInt(10));
         }
+        // embers drifting up across the whole view
+        if (rnd.nextInt(2) == 0) addSpark(wx + rnd.nextDouble() * vw, wy + vh, (rnd.nextDouble() - 0.5) * 40, -120 - rnd.nextDouble() * 140, 1.6, new Color(255, 170, 70), 3);
 
         for (Iterator<MagicalFlame> it = flames.iterator(); it.hasNext(); ) {
             MagicalFlame f = it.next();
             f.life -= dt;
-            f.x += f.vx * dt;
+            f.x += (f.vx + Math.sin(time * 6 + f.y * 0.05) * 14) * dt;
             f.y += f.vy * dt;
             if (f.life <= 0) it.remove();
         }
     }
 
     private void addSpark(double x, double y, double vx, double vy, double life, Color c, int size) {
-        if (sparks.size() >= 400) return;
+        if (sparks.size() >= 1500) return;
         FireworkSpark s = new FireworkSpark();
         s.x = x; s.y = y; s.vx = vx; s.vy = vy; s.life = s.max = life; s.c = c; s.size = size;
         sparks.add(s);
     }
 
     private void addFlame(double x, double y, double vx, double vy, double life, Color c, int size) {
-        if (flames.size() >= 200) return;
+        if (flames.size() >= 420) return;
         MagicalFlame f = new MagicalFlame();
         f.x = x; f.y = y; f.vx = vx; f.vy = vy; f.life = f.max = life; f.c = c; f.size = size;
         flames.add(f);
     }
 
+    /** Peony, ring, double ring and willow bursts, each in the winners' colours plus violet, gold and white. */
     private void detonateRocket(FireworkRocket r) {
         Sfx.play("firework");
-        int count = 35 + rnd.nextInt(20);
         Color primary = r.c;
         Color secondary = r.team == 1 ? new Color(60, 220, 255) : new Color(255, 60, 100);
-        Color violet = new Color(190, 70, 255);
+        Color violet = new Color(190, 70, 255), gold = new Color(255, 205, 90);
+        int kind = rnd.nextInt(4);
+        int count = kind == 1 ? 64 : 100 + rnd.nextInt(50);
+        double speed = 160 + rnd.nextDouble() * 120;
         for (int i = 0; i < count; i++) {
-            double ang = rnd.nextDouble() * Math.PI * 2;
-            double spd = 60 + rnd.nextDouble() * 180;
-            Color sc = rnd.nextInt(3) == 0 ? Color.WHITE : rnd.nextBoolean() ? primary : (rnd.nextBoolean() ? secondary : violet);
-            addSpark(r.x, r.y, Math.cos(ang) * spd, Math.sin(ang) * spd, 0.5 + rnd.nextDouble() * 0.6, sc, rnd.nextInt(3) + 2);
+            double ang = kind == 1 ? i * Math.PI * 2 / count : rnd.nextDouble() * Math.PI * 2;
+            double spd = kind == 1 ? speed : 50 + rnd.nextDouble() * speed * 1.4;
+            Color sc = rnd.nextInt(4) == 0 ? Color.WHITE : rnd.nextInt(3) == 0 ? gold : rnd.nextBoolean() ? primary : (rnd.nextBoolean() ? secondary : violet);
+            double life = kind == 3 ? 1.3 + rnd.nextDouble() * 0.8 : 0.7 + rnd.nextDouble() * 0.7; // willow: long falling trails
+            addSpark(r.x, r.y, Math.cos(ang) * spd, Math.sin(ang) * spd, life, sc, 3 + rnd.nextInt(3));
         }
-    }
-
-    /** Dark-fantasy ruins picture, scaled to cover the arena. Falls back to a plain color if the file is missing. */
-    private static BufferedImage loadBackground() {
-        try {
-            BufferedImage src = javax.imageio.ImageIO.read(new java.io.File("assets/background.png"));
-            int w = MapData.W + 2 * PAD, h = MapData.H + 2 * PAD;
-            double k = Math.max((double) w / src.getWidth(), (double) h / src.getHeight());
-            BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
-            Graphics2D g = out.createGraphics();
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-            int dw = (int) Math.ceil(src.getWidth() * k), dh = (int) Math.ceil(src.getHeight() * k);
-            g.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh, null);
-            g.dispose();
-            return out;
-        } catch (Exception e) {
-            return null;
+        if (kind == 2) for (int i = 0; i < 40; i++) { // inner ring
+            double ang = i * Math.PI * 2 / 40;
+            addSpark(r.x, r.y, Math.cos(ang) * speed * 0.5, Math.sin(ang) * speed * 0.5, 0.9, gold, 4);
         }
+        ring(r.x, r.y - 10, r.team, 0.5, 70);
+        if (blooms.size() < 14) blooms.add(new Object[]{r.x, r.y, primary, 0.0});
     }
 
     private static Snapshot.P find(Snapshot s, int id) {

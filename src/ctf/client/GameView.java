@@ -3,7 +3,6 @@ package ctf.client;
 import ctf.common.MapData;
 
 import javax.swing.JComponent;
-import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
@@ -21,14 +20,17 @@ import java.awt.event.MouseMotionListener;
 import java.awt.image.BufferedImage;
 
 /**
- * Shows Dilmi's GamePanel at any window size. GamePanel always draws a fixed 800x600 world, so this
- * component draws it scaled to fit (with black bars to keep the shape) and converts mouse positions
- * from screen pixels back into world pixels before handing the events to GamePanel.
+ * Shows Dilmi's GamePanel at any window size. The arena is always the same 800x600 world (the server's
+ * collision code depends on it), so the window is zoomed until the whole arena plus a small margin fits,
+ * and whatever the window shows beyond the arena is filled with real scenery (GamePanel/Scenery), not black
+ * bars. This component tells GamePanel which part of the world is visible, and converts mouse positions from
+ * screen pixels back into world pixels before handing the events to GamePanel.
  * F11 toggles full screen and Esc leaves it.
  */
 public class GameView extends JComponent {
     private final GamePanel game;
-    private static final double MAX_RENDER_SCALE = 2.0;   // never draw the world bigger than 1600x1200 pixels
+    private static final double MAX_RENDER_SCALE = 2.0;   // draw at most 2 pixels per world pixel, then enlarge (keeps 4K fast)
+    private static final double MARGIN = 16;               // world units of scenery kept visible around the arena
     private BufferedImage frame;                           // the game drawn at the window's real pixel size
     private double renderCap = MAX_RENDER_SCALE;           // lowered automatically on slow computers
     private double avgMs = 16;                             // recent time to draw one frame
@@ -40,6 +42,7 @@ public class GameView extends JComponent {
         this.game = game;
         this.toggleFullscreen = toggleFullscreen;
         this.leaveFullscreen = leaveFullscreen;
+        game.setDoubleBuffered(false);
         game.setSize(MapData.W, MapData.H);   // GamePanel is never shown itself: we paint it
         setPreferredSize(new Dimension(MapData.W, MapData.H));
         setMinimumSize(new Dimension(MapData.W / 2, MapData.H / 2));
@@ -85,14 +88,15 @@ public class GameView extends JComponent {
         }).start();
     }
 
-    /** Pixels per world pixel: the whole 800x600 world must fit. */
+    /** Pixels per world pixel: the whole arena plus MARGIN on every side must fit. */
     double scale() {
-        return Math.min(getWidth() / (double) MapData.W, getHeight() / (double) MapData.H);
+        return Math.max(0.01, Math.min(getWidth() / (MapData.W + 2 * MARGIN), getHeight() / (MapData.H + 2 * MARGIN)));
     }
 
-    double offsetX() { return (getWidth() - MapData.W * scale()) / 2; }
+    /** World coordinate at the left / top edge of the window. */
+    double worldX0() { return MapData.W / 2.0 - getWidth() / scale() / 2; }
 
-    double offsetY() { return (getHeight() - MapData.H * scale()) / 2; }
+    double worldY0() { return MapData.H / 2.0 - getHeight() / scale() / 2; }
 
     private KeyEvent forKey(KeyEvent e) {
         return new KeyEvent(game, e.getID(), e.getWhen(), e.getModifiersEx(), e.getKeyCode(), e.getKeyChar());
@@ -100,8 +104,8 @@ public class GameView extends JComponent {
 
     /** The same mouse event, with the position converted from screen pixels to world pixels. */
     private MouseEvent forMouse(MouseEvent e) {
-        int wx = (int) Math.round((e.getX() - offsetX()) / scale());
-        int wy = (int) Math.round((e.getY() - offsetY()) / scale());
+        int wx = (int) Math.round(e.getX() / scale() + worldX0());
+        int wy = (int) Math.round(e.getY() / scale() + worldY0());
         return new MouseEvent(game, e.getID(), e.getWhen(), e.getModifiersEx(), wx, wy,
                 e.getClickCount(), e.isPopupTrigger(), e.getButton());
     }
@@ -118,9 +122,9 @@ public class GameView extends JComponent {
                 Main.logError("Drawing the game failed", t);
             }
             Graphics2D g = (Graphics2D) g0.create();
-            g.setColor(Color.BLACK);
+            g.setColor(java.awt.Color.BLACK);
             g.fillRect(0, 0, getWidth(), getHeight());
-            g.setColor(Color.WHITE);
+            g.setColor(java.awt.Color.WHITE);
             g.drawString("Drawing error: " + t, 20, 30);
             g.drawString("Details are in ctf-client-error.log (please send it)", 20, 52);
             g.dispose();
@@ -128,32 +132,43 @@ public class GameView extends JComponent {
     }
 
     private void paintGame(Graphics g0) {
-        // The game is drawn into a plain image whose size is the window's REAL pixel size (a 150% scaled
-        // screen has more pixels than getWidth() says), with the world scaled up while drawing, so lines,
-        // text and effects are sharp instead of an enlarged small picture. Then the image is copied 1:1.
-        // (Painting GamePanel straight onto the window's graphics broke on scaled screens: stretched stripes.)
+        // Two passes, both at the screen's REAL pixel size (a 150% scaled screen has more pixels than getWidth()):
+        //  1. the battlefield is drawn into an image with one pixel per screen pixel and copied 1:1;
+        //  2. all text and UI (GamePanel.paintOverlay) is then drawn straight onto the window at native resolution,
+        //     so glyphs are rasterised once and never resampled, even when pass 1 had to drop to a lower resolution.
         java.awt.GraphicsConfiguration gc = getGraphicsConfiguration();
         double dpi = gc == null ? 1.0 : gc.getDefaultTransform().getScaleX();
         long started = System.nanoTime();
         double s = scale() * dpi;                       // real screen pixels per world pixel
-        double rs = Math.min(s, renderCap);             // big screens: draw smaller, then enlarge (keeps it fast)
-        int rw = Math.max(1, (int) Math.round(MapData.W * rs));
-        int rh = Math.max(1, (int) Math.round(MapData.H * rs));
+        double rs = Math.min(s, renderCap);             // only when the computer is slow: draw the world smaller, then enlarge
+        double vw = getWidth() / scale(), vh = getHeight() / scale(), vx0 = worldX0(), vy0 = worldY0();
+        int pw = (int) Math.round(getWidth() * dpi), ph = (int) Math.round(getHeight() * dpi);
+        int rw = Math.max(1, (int) Math.round(vw * rs));
+        int rh = Math.max(1, (int) Math.round(vh * rs));
         if (frame == null || frame.getWidth() != rw || frame.getHeight() != rh) {
             frame = new BufferedImage(rw, rh, BufferedImage.TYPE_INT_RGB);
         }
         Graphics2D fg = frame.createGraphics();
-        fg.scale(rw / (double) MapData.W, rh / (double) MapData.H);
-        fg.setClip(0, 0, MapData.W, MapData.H);
-        game.paint(fg);
+        fg.scale(rw / vw, rh / vh);
+        fg.translate(-vx0, -vy0);
+        fg.setClip(new java.awt.geom.Rectangle2D.Double(vx0, vy0, vw, vh));
+        game.setView(vx0, vy0, vw, vh);
+        game.paintWorld(fg);
         fg.dispose();
 
         Graphics2D g = (Graphics2D) g0.create();
-        g.setColor(Color.BLACK);
-        g.fillRect(0, 0, getWidth(), getHeight());       // the bars beside the game
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-        g.drawImage(frame, (int) Math.round(offsetX()), (int) Math.round(offsetY()),
-                (int) Math.round(MapData.W * scale()), (int) Math.round(MapData.H * scale()), null);
+        java.awt.geom.AffineTransform origin = g.getTransform();   // where this component starts, in device pixels
+        g.setTransform(new java.awt.geom.AffineTransform());
+        g.translate(origin.getTranslateX(), origin.getTranslateY());
+        if (rw == pw && rh == ph) g.drawImage(frame, 0, 0, null);
+        else {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(frame, 0, 0, pw, ph, null);                // fills the whole window: no bars
+        }
+        g.scale(pw / vw, ph / vh);
+        g.translate(-vx0, -vy0);
+        g.clip(new java.awt.geom.Rectangle2D.Double(vx0, vy0, vw, vh));
+        game.paintOverlay(g);
         g.dispose();
 
         // Adapt to slow computers: if drawing takes too long, draw at a slightly smaller size from now on.
