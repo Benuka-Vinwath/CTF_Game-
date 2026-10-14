@@ -172,49 +172,12 @@ final class Art {
     }
 
     /** Carved stone block. Drawn exactly on the collision rectangle. */
-    static void wall(Graphics2D g, double[] w) {
-        int x = (int) w[0], y = (int) w[1], ww = (int) w[2], h = (int) w[3];
-        g.setColor(new Color(52, 45, 70));
-        g.fillRect(x, y, ww, h);
-        g.setColor(new Color(30, 25, 45));
-        int row = 0;
-        for (int yy = y; yy < y + h; yy += 10, row++) {
-            g.drawLine(x, yy, x + ww, yy);
-            for (int xx = x + (row % 2) * 10; xx < x + ww; xx += 20) g.drawLine(xx, yy, xx, Math.min(yy + 10, y + h));
-        }
-        g.setColor(new Color(120, 105, 160));
-        g.fillRect(x, y, ww, 3);
-        g.setColor(new Color(15, 12, 24));
-        g.drawRect(x, y, ww, h);
-    }
+    static void wall(Graphics2D g, double[] w) { HD.wall(g, w); }
 
-    static void pedestal(Graphics2D g, double x, double y, int team) {
-        g.setColor(new Color(34, 30, 46));
-        g.fill(new Ellipse2D.Double(x - 14, y + 6, 28, 12));
-        g.setColor(FX[team]);
-        g.draw(new Ellipse2D.Double(x - 14, y + 6, 28, 12));
-    }
+    static void pedestal(Graphics2D g, double x, double y, int team) { HD.pedestal(g, x, y, team); }
 
     /** Waving cloth on a pole; (x, y) is the middle of the pole. */
-    static void flag(Graphics2D g, double x, double y, int team, double t) {
-        g.setColor(new Color(190, 185, 200));
-        g.fill(new Rectangle2D.Double(x - 1, y - 16, 2, 30));
-        int n = 6;
-        int[] xs = new int[2 * n], ys = new int[2 * n];
-        for (int i = 0; i < n; i++) {
-            double off = Math.sin(t * 6 - i * 0.9) * (0.5 + i * 0.5);
-            xs[i] = (int) (x + 1 + i * 3);
-            ys[i] = (int) (y - 16 + off);
-            xs[2 * n - 1 - i] = xs[i];
-            ys[2 * n - 1 - i] = (int) (y - 16 + off + 11);
-        }
-        g.setColor(PAL[team][5]);
-        g.fillPolygon(xs, ys, 2 * n);
-        g.setColor(PAL[team][0]);
-        g.drawPolygon(xs, ys, 2 * n);
-        g.setColor(FX[team]);
-        g.fillRect(xs[2] + 1, ys[2] + 4, 4, 3);
-    }
+    static void flag(Graphics2D g, double x, double y, int team, double t) { HD.flag(g, x, y, team, t); }
 
     /** Vertical light column rising from (x, y), brightest at the bottom. */
     static void beam(Graphics2D g, double x, double y, Color c, float a) {
@@ -225,18 +188,9 @@ final class Art {
         g.setPaint(old);
     }
 
-    static void panel(Graphics2D g, int x, int y, int w, int h, Color border) {
-        g.setColor(new Color(8, 8, 18, 190));
-        g.fillRoundRect(x, y, w, h, 8, 8);
-        g.setColor(border);
-        g.setStroke(new BasicStroke(2));
-        g.drawRoundRect(x, y, w, h, 8, 8);
-        g.setColor(new Color(border.getRed(), border.getGreen(), border.getBlue(), 70));
-        g.setStroke(new BasicStroke(1));
-        g.drawRoundRect(x + 3, y + 3, w - 6, h - 6, 5, 5);
-    }
+    static void panel(Graphics2D g, int x, int y, int w, int h, Color border) { HD.panel(g, x, y, w, h, border); }
 
-    static Font font(int size) { return FONTS.computeIfAbsent(size, s -> new Font(Font.MONOSPACED, Font.BOLD, s)); }
+    static Font font(int size) { return FONTS.computeIfAbsent(size, HD::font); }
 
     static void text(Graphics2D g, String s, int x, int y, Color c) {
         g.setColor(new Color(0, 0, 0, 200));

@@ -89,7 +89,7 @@ public class GamePanel extends JPanel {
     private final BufferedImage vignette = Art.vignette(MapData.W, MapData.H);
     // When GameView draws the game bigger (full screen), the background and the edge shading are stretched
     // once per window size and reused every frame; stretching them again each frame was far too slow.
-    private BufferedImage bgCache, vignetteCache;
+    private BufferedImage bgCache, bgCacheVig, fogCache;
     private double cacheScale;
 
     public GamePanel(NetLink link, int myId) {
@@ -515,8 +515,7 @@ public class GamePanel extends JPanel {
         for (Particle p : parts) {
             Composite old = g.getComposite();
             g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, Math.min(1, p.life / p.max))));
-            g.setColor(p.c);
-            g.fillRect((int) p.x - p.size / 2, (int) p.y - p.size / 2, p.size, p.size);
+            HD.spark(g, p.x, p.y, p.size * 1.2, p.c);
             g.setComposite(old);
         }
         for (double[] b : beams) Art.beam(g, b[0], b[1], Art.FX[(int) b[2]], (float) Math.min(1, b[3]));
@@ -543,11 +542,7 @@ public class GamePanel extends JPanel {
         }
         g.setTransform(base);
 
-        if (fx) {
-            double sc = g.getTransform().getScaleX();
-            if (vignetteCache != null && sc > 1.25 && cacheScale == sc) g.drawImage(vignetteCache, 0, 0, MapData.W, MapData.H, null);
-            else g.drawImage(vignette, 0, 0, null);
-        }
+        if (fx && bg == null) g.drawImage(vignette, 0, 0, null);   // with a background picture the shading is baked into it
         if (flash > 0) { g.setColor(new Color(255, 0, 0, (int) (110 * flash))); g.fillRect(0, 0, MapData.W, MapData.H); }
         drawHud(g, s);
         if (showBoard && s.winner < 0) drawBoard(g, s);
@@ -576,18 +571,37 @@ public class GamePanel extends JPanel {
         Graphics2D cg = c.createGraphics();
         cg.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
         cg.drawImage(bg, 0, 0, bw, bh, null);
+        cg.dispose();
+        c = HD.enhanceBackground(c);             // sharpen, light shafts, film grain
+        cg = c.createGraphics();
         cg.setColor(new Color(6, 6, 18, 120));   // the same darkening as below
         cg.fillRect(0, 0, bw, bh);
         cg.dispose();
         bgCache = c;
-        vignetteCache = Art.vignette((int) Math.round(MapData.W * sc), (int) Math.round(MapData.H * sc));
+        // the same picture with the dark edge shading already baked in, so it costs nothing per frame
+        BufferedImage v = new BufferedImage(bw, bh, BufferedImage.TYPE_INT_RGB);
+        Graphics2D vg = v.createGraphics();
+        vg.drawImage(c, 0, 0, null);
+        vg.drawImage(Art.vignette((int) Math.round(MapData.W * sc), (int) Math.round(MapData.H * sc)),
+                (int) Math.round(PAD * sc), (int) Math.round(PAD * sc), null);
+        vg.dispose();
+        bgCacheVig = v;
+        fogCache = HD.fogTexture(bw, (int) (bh * 0.36));
     }
 
     private void drawBackground(Graphics2D g) {
         double sc = g.getTransform().getScaleX();
-        if (bg != null && sc > 1.25) {   // enlarged: use the picture that was stretched once for this size
+        if (bg != null) {   // the picture prepared once for this size: sharpened, with light shafts and grain
             ensureScaledCaches(sc);
-            g.drawImage(bgCache, -PAD, -PAD, MapData.W + 2 * PAD, MapData.H + 2 * PAD, null);
+            g.drawImage(fx ? bgCacheVig : bgCache, -PAD, -PAD, MapData.W + 2 * PAD, MapData.H + 2 * PAD, null);
+            if (fx && fogCache != null) {   // slow ground fog, drifting sideways
+                int fullW = MapData.W + 2 * PAD;
+                double fogH = fogCache.getHeight() / cacheScale;
+                double drift = (time * 7) % fullW;
+                int fy = (int) (-PAD + (MapData.H + 2 * PAD) - fogH);
+                g.drawImage(fogCache, (int) (-PAD - drift), fy, fullW, (int) fogH, null);
+                g.drawImage(fogCache, (int) (-PAD - drift + fullW), fy, fullW, (int) fogH, null);
+            }
             return;
         }
         if (bg != null) {
@@ -606,8 +620,7 @@ public class GamePanel extends JPanel {
         for (int t = 0; t < 2; t++) {
             double[] b = MapData.BASES[t];
             if (fx) Art.glow(g, Art.FX[t], b[0], b[1], 120, 0.28f);
-            g.setColor(new Color(Art.FX[t].getRed(), Art.FX[t].getGreen(), Art.FX[t].getBlue(), 40));
-            g.fill(new Ellipse2D.Double(b[0] - b[2], b[1] - b[2], b[2] * 2, b[2] * 2));
+            HD.baseDisc(g, b[0], b[1], b[2], t);
             Stroke old = g.getStroke();
             g.setColor(Art.FX[t]);
             g.setStroke(new BasicStroke(2, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{8, 6}, (float) (t == 0 ? time * 12 % 14 : 14 - time * 12 % 14)));
@@ -620,14 +633,7 @@ public class GamePanel extends JPanel {
     private void drawCrystal(Graphics2D g, double x, double y, int t) {
         double pulse = 0.7 + 0.3 * Math.sin(time * 2.5 + x + y);
         if (fx) Art.glow(g, Art.FX[t], x, y, 34, (float) (0.5 * pulse));
-        Path2D.Double d = new Path2D.Double();
-        d.moveTo(x, y - 11); d.lineTo(x + 6, y); d.lineTo(x, y + 9); d.lineTo(x - 6, y); d.closePath();
-        g.setColor(new Color(20, 14, 40));
-        g.fill(d);
-        g.setColor(new Color(Art.FX[t].getRed(), Art.FX[t].getGreen(), Art.FX[t].getBlue(), (int) (255 * pulse)));
-        g.fill(new Rectangle2D.Double(x - 2, y - 5, 4, 9));
-        g.setColor(Color.WHITE);
-        g.fillRect((int) x - 1, (int) y - 6, 2, 2);
+        HD.crystal(g, x, y, t, pulse);
     }
 
     /** A flickering torch on top of every wall block. */
@@ -636,19 +642,13 @@ public class GamePanel extends JPanel {
             double x = w[0] + w[2] / 2, y = w[1] - 2;
             double f = (Math.sin(time * 13 + x) + Math.sin(time * 7.3 + y)) / 2;
             if (fx) Art.glow(g, new Color(255, 140, 40), x, y - 8, 56, (float) (0.35 + 0.1 * f));
-            g.setColor(new Color(80, 60, 50));
-            g.fillRect((int) x - 1, (int) y - 2, 3, 8);
-            g.setColor(new Color(255, 110, 30));
-            g.fillRect((int) x - 2, (int) (y - 9 - f * 1.5), 5, (int) (7 + f * 1.5));
-            g.setColor(new Color(255, 215, 100));
-            g.fillRect((int) x - 1, (int) (y - 7 - f), 3, (int) (4 + f));
+            HD.torch(g, x, y, f, time);
         }
     }
 
     private void drawEmbers(Graphics2D g) {
         for (double[] e : embers) {
-            g.setColor(e[0] < MapData.W / 2 ? new Color(255, 150, 60, 170) : new Color(110, 220, 255, 150));
-            g.fillRect((int) e[0], (int) e[1], 2, 2);
+            HD.spark(g, e[0], e[1], 2.4, e[0] < MapData.W / 2 ? new Color(255, 150, 60, 170) : new Color(110, 220, 255, 150));
         }
     }
 
@@ -690,12 +690,17 @@ public class GamePanel extends JPanel {
         }
         double px = xy[0], py = xy[1];
 
-        g.setColor(new Color(0, 0, 0, 100));
-        g.fill(new Ellipse2D.Double(px - 11, py + 9, 22, 7)); // shadow
+        AffineTransform shadowBase = g.getTransform(); // soft round shadow, squashed into an ellipse
+        g.translate(px, py + 12.5);
+        g.scale(1, 0.36);
+        g.setPaint(new RadialGradientPaint(new Point2D.Double(0, 0), 14f, new float[]{0f, 1f},
+                new Color[]{new Color(0, 0, 0, 130), new Color(0, 0, 0, 0)}));
+        g.fill(new Ellipse2D.Double(-14, -14, 28, 28));
+        g.setTransform(shadowBase);
         if (!p.alive) {
             Composite old = g.getComposite();
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.7f));
-            g.drawImage(sprite(g, p.team, 3, 24, 10), (int) px - 12, (int) py + 2, 24, 10, null);
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.75f));
+            HD.fallen(g, p.team, px, py);
             g.setComposite(old);
             return;
         }
@@ -709,7 +714,7 @@ public class GamePanel extends JPanel {
         double bob = moving ? ((phase & 1) == 0 ? 0 : -2) : Math.sin(time * 3 + p.id) * 1.2;
         boolean left = Math.cos(aim) < 0;
         int x0 = (int) px - 12, y0 = (int) (py - 20 + bob);
-        g.drawImage(sprite(g, p.team, frame, 24, 32), left ? x0 + 24 : x0, y0, left ? -24 : 24, 32, null);
+        HD.character(g, p.team, frame, px, py + bob, left, time, p.id);
 
         // Body energy cycle / magical invulnerability ring
         if (p.shieldSec > 0) {
@@ -721,26 +726,15 @@ public class GamePanel extends JPanel {
         AffineTransform old = g.getTransform(); // gun
         g.translate(px, py + 2 + bob);
         g.rotate(aim);
-        g.setColor(new Color(60, 64, 80));
-        g.fillRect(4 + kick, -3, 20, 6);
-        g.setColor(new Color(140, 145, 165));
-        g.fillRect(4 + kick, -3, 20, 1);
-        g.setColor(new Color(40, 42, 54));
-        g.fillRect(4 + kick, 2, 6, 4); // grip
-        g.setColor(Art.FX[p.team]);
-        g.fillRect(21 + kick, -3, 3, 6);
-        if (ft > 0) { // muzzle flash along the barrel
-            g.setColor(Art.FX[p.team]);
-            g.fillRect(25, -2, 10, 4);
-            g.setColor(Color.WHITE);
-            g.fillRect(25, -1, 6, 2);
-            g.fillRect(24, -4, 3, 8);
-        }
+        HD.gun(g, p.team, kick, ft > 0, left);
         g.setTransform(old);
         if (ft > 0 && fx) Art.glow(g, Art.FX[p.team], px + Math.cos(aim) * 28, py + 2 + bob + Math.sin(aim) * 28, 24, 0.9f);
 
         g.setFont(Art.font(10));
-        Art.textCenter(g, p.name, (int) px - 40, 80, y0 - 4, p.team == 0 ? new Color(255, 160, 150) : new Color(170, 225, 255));
+        int tagW = g.getFontMetrics().stringWidth(p.name) + 10; // a dark pill behind the name keeps it readable
+        g.setColor(new Color(4, 4, 14, 125));
+        g.fill(new RoundRectangle2D.Double(px - tagW / 2.0, y0 - 16, tagW, 14, 8, 8));
+        Art.textCenter(g, p.name, (int) px - 40, 80, y0 - 5, p.team == 0 ? new Color(255, 160, 150) : new Color(170, 225, 255));
     }
 
     /** Travel direction of a server bullet, from where it was one snapshot ago; 0 if it just spawned. */
@@ -755,15 +749,7 @@ public class GamePanel extends JPanel {
     /** Glowing energy bolt; its bright core is exactly at (x, y), the collision position. */
     private void drawBullet(Graphics2D g, double x, double y, double ang, int t) {
         if (fx) Art.glow(g, Art.FX[t], x, y, 16, 0.7f);
-        AffineTransform old = g.getTransform();
-        g.translate(x, y);
-        g.rotate(ang);
-        int len = 12 + (int) Math.round(Math.sin(time * 40));
-        g.setColor(Art.FX[t]);
-        g.fillRect(-len / 2 - 2, -2, len, 5);
-        g.setColor(Color.WHITE);
-        g.fillRect(-2, -1, 6, 3);
-        g.setTransform(old);
+        HD.bolt(g, x, y, ang, t, time);
     }
 
     // ---------- HUD ----------
