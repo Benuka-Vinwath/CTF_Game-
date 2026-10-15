@@ -89,8 +89,6 @@ public class GamePanel extends JPanel {
     // until then (and when a test paints the panel directly) it is simply the panel's own size.
     private double viewX, viewY, viewW, viewH;
     private boolean viewSet;
-    private BufferedImage vignetteImg;
-    private double vigScale, vigW, vigH;
     private final List<double[]> rings = new ArrayList<>();      // {x, y, team (-1 white), age, life, radius}
     private final List<Object[]> notices = new ArrayList<>();    // {text, color, age}: big centre-screen announcements
     private final double[] scorePop = new double[2];             // 1 -> 0 after a team scores, drives the score bounce
@@ -191,7 +189,7 @@ public class GamePanel extends JPanel {
         addMouseListener(m);
         addMouseMotionListener(m);
 
-        new javax.swing.Timer(16, e -> tick()).start();
+        new javax.swing.Timer(16, e -> { if (!externalClock) tick(); }).start();
     }
 
     // ---------- network entry point (any thread) ----------
@@ -219,6 +217,23 @@ public class GamePanel extends JPanel {
     }
 
     // ---------- per-frame update ----------
+
+    boolean effectsOn() { return fx; }
+
+    void setEffects(boolean on) { fx = on; }
+
+    /** Shows a short message in the event feed. */
+    void tell(String message) { say(message); }
+
+    // On its own, the panel moves things on a 16 ms timer, while whoever paints it uses another timer. The two drift
+    // apart, so some painted frames show a stale position and the next one jumps: visible stutter even at 60 fps.
+    // GameView takes over the clock instead: it calls frameTick() once per painted frame, right before drawing.
+    private boolean externalClock;
+
+    void useExternalClock() { externalClock = true; }
+
+    /** Advances the game by the time since the last call. Call once per painted frame, on the Swing thread. */
+    void frameTick() { tick(); }
 
     private void tick() {
         long now = System.nanoTime();
@@ -590,8 +605,7 @@ public class GamePanel extends JPanel {
         g.translate(shakeX, shakeY);
 
         scenery.drawBack(g, vX0(), vY0(), vW(), vH(), camX, camY, time, fx);
-        drawBases(g);
-        for (double[] w : MapData.WALLS) Art.wall(g, w);
+        drawBases(g);   // the walls are part of the cached backdrop (Scenery.buildBack), not redrawn every frame
         drawTorches(g);
         Art.tent(g, MapData.TENT_X, MapData.TENT_Y, s.tentCooldown <= 0 ? 1.0 : 1.0 - s.tentCooldown / MapData.TENT_RECHARGE, time, fx);
         drawEntities(g, s);
@@ -657,7 +671,7 @@ public class GamePanel extends JPanel {
         scenery.drawFront(g, camX, camY, fx);
         g.setTransform(base);
 
-        if (fx) drawVignette(g);
+        // the edge shading (vignette) is baked into the cached backdrop: Scenery.buildBack
         int fx0 = (int) Math.floor(vX0()), fy0 = (int) Math.floor(vY0()), fw = (int) Math.ceil(vW()) + 1, fh = (int) Math.ceil(vH()) + 1;
         if (flash > 0) { g.setColor(new Color(255, 0, 0, (int) (110 * flash))); g.fillRect(fx0, fy0, fw, fh); }
         Snapshot.P me = find(s, myId);
@@ -721,23 +735,10 @@ public class GamePanel extends JPanel {
         }
     }
 
-    /** Edge shading, made once per window size and zoom. */
-    private void drawVignette(Graphics2D g) {
-        double sc = g.getTransform().getScaleX();
-        if (vignetteImg == null || sc != vigScale || vW() != vigW || vH() != vigH) {
-            vigScale = sc; vigW = vW(); vigH = vH();
-            vignetteImg = Art.vignette((int) Math.ceil(vigW * sc), (int) Math.ceil(vigH * sc));
-        }
-        Scenery.blit1to1(g, vignetteImg, vX0(), vY0());
-    }
-
     /** Team light pools, rune rings and crystals at each home base. */
     private void drawBases(Graphics2D g) {
         for (int t = 0; t < 2; t++) {
-            double[] b = MapData.BASES[t];
-            if (fx) Art.glow(g, Art.FX[t], b[0], b[1], 130, 0.30f);
-            g.setColor(new Color(Art.FX[t].getRed(), Art.FX[t].getGreen(), Art.FX[t].getBlue(), 40));
-            g.fill(new Ellipse2D.Double(b[0] - b[2], b[1] - b[2], b[2] * 2, b[2] * 2));
+            double[] b = MapData.BASES[t];   // the pooled light and the disc are baked into the backdrop; the ring and crystals animate
             Stroke old = g.getStroke();
             g.setColor(Art.FX[t]);
             g.setStroke(new BasicStroke(2, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{8, 6}, (float) (t == 0 ? time * 12 % 14 : 14 - time * 12 % 14)));

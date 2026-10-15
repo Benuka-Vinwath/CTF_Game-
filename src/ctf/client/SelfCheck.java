@@ -9,7 +9,8 @@ public class SelfCheck {
         assert MapData.segHits(100, 100, 160, 100, 130, 105, MapData.R);
         assert !MapData.segHits(100, 100, 160, 100, 130, 130, MapData.R);
         assert !MapData.segHits(100, 100, 120, 100, 150, 100, MapData.R); // target beyond the segment end
-        assert MapData.nearSolid(390, 300, 0);   // inside the centre wall
+        double[] w = MapData.WALLS[0];           // read from the map, so a new layout cannot make this test stale
+        assert MapData.nearSolid(w[0] + w[2] / 2, w[1] + w[3] / 2, 0);   // inside the centre wall
         assert !MapData.nearSolid(300, 300, 0);  // open floor
         assert MapData.nearSolid(-1, 300, 0);    // outside the arena
         System.out.println("self-check ok");

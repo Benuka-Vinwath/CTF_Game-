@@ -127,6 +127,19 @@ final class Art {
     }
 
     /** Dark edges, elliptical so it fits any window shape. */
+    /** The same edge shading, painted straight onto g over the world rectangle (x, y, w, h). Used to bake it into the backdrop. */
+    static void vignette(Graphics2D g, double x, double y, double w, double h) {
+        AffineTransform keep = g.getTransform();
+        Paint oldPaint = g.getPaint();
+        g.translate(x + w / 2, y + h / 2);
+        g.scale(1, h / w);
+        g.setPaint(new RadialGradientPaint(new Point2D.Float(0, 0), (float) (w * 0.66), new float[]{0f, 0.55f, 1f},
+            new Color[]{new Color(0, 0, 0, 0), new Color(0, 0, 0, 0), new Color(2, 0, 12, 200)}));
+        g.fill(new Rectangle2D.Double(-w / 2, -w / 2, w, w));
+        g.setPaint(oldPaint);
+        g.setTransform(keep);
+    }
+
     static BufferedImage vignette(int w, int h) {
         BufferedImage im = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = im.createGraphics();
@@ -220,24 +233,59 @@ final class Art {
     }
 
     /** A flickering flame with a stone bowl; (x, y) is the base of the fire. s scales it. */
+    // The flames loop every 1.4 s. They are drawn once into a short sheet of frames per screen size and then copied,
+    // which costs far less than three vector shapes per torch every frame (a room has about twenty). The fire LIGHT
+    // on the floor is baked into the backdrop (Scenery.buildBack). Every torch starts at a different point of the loop.
+    private static final int FLAME_FRAMES = 48;
+    private static final double FLAME_PERIOD = 1.4;
+    private static final Map<String, BufferedImage[]> FLAMES = new HashMap<>();
+
     static void torchFlame(Graphics2D g, double x, double y, double t, double s, boolean fx) {
-        double f = (Math.sin(t * 13 + x) + Math.sin(t * 7.3 + y)) / 2;
-        if (fx) glow(g, new Color(255, 140, 40), x, y - 12 * s, (int) (64 * s), (float) (0.34 + 0.1 * f));
-        g.setColor(new Color(36, 30, 44));
-        g.fill(new RoundRectangle2D.Double(x - 6 * s, y - 1 * s, 12 * s, 6 * s, 4, 4));
-        g.setColor(new Color(96, 84, 126));
-        g.fill(new Rectangle2D.Double(x - 6 * s, y - 1 * s, 12 * s, 1.5 * s));
-        Color[] c = {new Color(255, 84, 20, 235), new Color(255, 160, 50), new Color(255, 236, 160)};
-        for (int k = 0; k < 3; k++) {
-            double h = (24 - k * 7 + f * 3) * s, w = (7 - k * 2) * s, sway = Math.sin(t * 9 + k * 1.7 + x) * 1.8 * s;
-            Path2D.Double p = new Path2D.Double();
-            p.moveTo(x - w, y);
-            p.curveTo(x - w, y - h * 0.45, x + sway - w * 0.3, y - h * 0.7, x + sway, y - h);
-            p.curveTo(x + sway + w * 0.3, y - h * 0.7, x + w, y - h * 0.45, x + w, y);
-            p.closePath();
-            g.setColor(c[k]);
-            g.fill(p);
-        }
+        double sc = g.getTransform().getScaleX();
+        BufferedImage[] frames = flameFrames(s, sc);
+        double phase = ((x * 0.173 + y * 0.311) % 1 + 1) % 1;
+        int i = (int) (((long) Math.floor((t / FLAME_PERIOD + phase) * FLAME_FRAMES) % FLAME_FRAMES + FLAME_FRAMES) % FLAME_FRAMES);
+        Scenery.blit1to1(g, frames[i], x - flameAnchorX(s, sc) / sc, y - flameAnchorY(s, sc) / sc);
+    }
+
+    private static int flameAnchorX(double s, double sc) { return (int) Math.ceil(10 * s * sc) + 2; }
+
+    private static int flameAnchorY(double s, double sc) { return (int) Math.ceil(30 * s * sc) + 2; }
+
+    private static synchronized BufferedImage[] flameFrames(double s, double sc) {
+        return FLAMES.computeIfAbsent(s + "@" + Math.round(sc * 1000), k -> {
+            int ax = flameAnchorX(s, sc), ay = flameAnchorY(s, sc);
+            int w = 2 * ax, h = ay + (int) Math.ceil(7 * s * sc) + 2;
+            BufferedImage[] out = new BufferedImage[FLAME_FRAMES];
+            double omega = 2 * Math.PI / FLAME_PERIOD;
+            for (int i = 0; i < FLAME_FRAMES; i++) {
+                BufferedImage im = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g = im.createGraphics();
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g.translate(ax, ay);
+                g.scale(sc, sc);
+                double t = i * FLAME_PERIOD / FLAME_FRAMES;
+                double f = (Math.sin(3 * omega * t) + Math.sin(2 * omega * t + 1.0)) / 2;
+                g.setColor(new Color(36, 30, 44));
+                g.fill(new RoundRectangle2D.Double(-6 * s, -1 * s, 12 * s, 6 * s, 4, 4));
+                g.setColor(new Color(96, 84, 126));
+                g.fill(new Rectangle2D.Double(-6 * s, -1 * s, 12 * s, 1.5 * s));
+                Color[] c = {new Color(255, 84, 20, 235), new Color(255, 160, 50), new Color(255, 236, 160)};
+                for (int j = 0; j < 3; j++) {
+                    double fh = (24 - j * 7 + f * 3) * s, fw = (7 - j * 2) * s, sway = Math.sin(2 * omega * t + j * 1.7) * 1.8 * s;
+                    Path2D.Double p = new Path2D.Double();
+                    p.moveTo(-fw, 0);
+                    p.curveTo(-fw, -fh * 0.45, sway - fw * 0.3, -fh * 0.7, sway, -fh);
+                    p.curveTo(sway + fw * 0.3, -fh * 0.7, fw, -fh * 0.45, fw, 0);
+                    p.closePath();
+                    g.setColor(c[j]);
+                    g.fill(p);
+                }
+                g.dispose();
+                out[i] = im;
+            }
+            return out;
+        });
     }
 
     /** The blaster, drawn along +x from the wielder's centre; the muzzle ends about 31 units out. kick pulls it back. */
@@ -360,16 +408,72 @@ final class Art {
     /** Bold UI face. Sizes keep the old numbering; the proportional face is a little smaller per point, hence the 1.15. */
     static Font font(int size) { return Type.ui(size * 1.15f, true); }
 
+    // Laying out and rasterising one string with the kerned, ligatured UI fonts costs about 0.2 ms, and a frame draws
+    // 20 or more of them. So each distinct string is rendered once (at the current zoom) and then copied, which costs
+    // a few microseconds. The least recently used entries are dropped, so the cache stays small.
+    private record TextKey(Font font, int rgb, double scale, Object aa, String text) {}
+
+    private static final class TextImg {
+        BufferedImage im;
+        int ox, oy;     // device pixels from the image's top-left to the text origin (left end of the baseline)
+        double width;   // advance width in world units
+    }
+
+    private static final Map<TextKey, TextImg> TEXT = new LinkedHashMap<>(256, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<TextKey, TextImg> e) { return size() > 700; }
+    };
+
+    private static synchronized TextImg textImg(Graphics2D g, String s, Color c, double sc) {
+        TextKey key = new TextKey(g.getFont(), c.getRGB(), sc, g.getRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING), s);
+        TextImg t = TEXT.get(key);
+        if (t != null) return t;
+        Graphics2D probe = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB).createGraphics();
+        probe.setRenderingHints(g.getRenderingHints());
+        probe.setFont(g.getFont());
+        probe.scale(sc, sc);
+        java.awt.font.FontRenderContext frc = probe.getFontRenderContext();
+        Rectangle2D b = g.getFont().getStringBounds(s, frc);
+        java.awt.font.LineMetrics lm = g.getFont().getLineMetrics(s, frc);
+        probe.dispose();
+        t = new TextImg();
+        t.width = b.getWidth();
+        t.ox = (int) Math.ceil(3 * sc);
+        t.oy = (int) Math.ceil((lm.getAscent() + 3) * sc);
+        int w = (int) Math.ceil((b.getWidth() + 6) * sc) + 2, h = t.oy + (int) Math.ceil((lm.getDescent() + 3) * sc) + 2;
+        t.im = new BufferedImage(Math.max(1, w), Math.max(1, h), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D cg = t.im.createGraphics();
+        cg.setRenderingHints(g.getRenderingHints());
+        cg.setFont(g.getFont());
+        cg.translate(t.ox, t.oy);
+        cg.scale(sc, sc);
+        cg.setColor(new Color(0, 0, 0, 170));
+        cg.drawString(s, 0.8f, 0.9f);
+        cg.setColor(c);
+        cg.drawString(s, 0f, 0f);
+        cg.dispose();
+        TEXT.put(key, t);
+        return t;
+    }
+
     /** Fractional positions are kept (FRACTIONALMETRICS), so spacing stays even at any zoom. */
     static void text(Graphics2D g, String s, double x, double y, Color c) {
-        g.setColor(new Color(0, 0, 0, 170));
-        g.drawString(s, (float) (x + 0.8), (float) (y + 0.9));
-        g.setColor(c);
-        g.drawString(s, (float) x, (float) y);
+        AffineTransform at = g.getTransform();
+        if (at.getShearX() != 0 || at.getShearY() != 0 || at.getScaleX() <= 0) {   // rotated or flipped: draw directly
+            g.setColor(new Color(0, 0, 0, 170));
+            g.drawString(s, (float) (x + 0.8), (float) (y + 0.9));
+            g.setColor(c);
+            g.drawString(s, (float) x, (float) y);
+            return;
+        }
+        double sc = at.getScaleX();
+        TextImg t = textImg(g, s, c, sc);
+        Scenery.blit1to1(g, t.im, x - t.ox / sc, y - t.oy / sc);
     }
 
     static void textCenter(Graphics2D g, String s, double x, double w, double y, Color c) {
-        text(g, s, x + (w - g.getFontMetrics().getStringBounds(s, g).getWidth()) / 2, y, c);
+        double sc = g.getTransform().getScaleX();
+        double width = sc > 0 ? textImg(g, s, c, sc).width : g.getFontMetrics().getStringBounds(s, g).getWidth();
+        text(g, s, x + (w - width) / 2, y, c);
     }
 
     /** Protective magical tent / sanctuary on the ground. */
