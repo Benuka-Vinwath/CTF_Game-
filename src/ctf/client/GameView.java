@@ -33,8 +33,10 @@ public class GameView extends JComponent {
     private static final double MARGIN = 16;               // world units of scenery kept visible around the arena
     private BufferedImage frame;                           // the game drawn at the window's real pixel size
     private double renderCap = MAX_RENDER_SCALE;           // lowered automatically on slow computers
-    private double avgMs = 16;                             // recent time to draw one frame
-    private int frames;
+    private double windowMs;                               // total drawing time of the frames in the current 2-second window
+    private int windowFrames, slowWindows;
+    private long firstFrameNs, windowStartNs;
+    private boolean effectsSwitchedOff;
     private final Runnable toggleFullscreen;
     private final Runnable leaveFullscreen;
 
@@ -43,6 +45,7 @@ public class GameView extends JComponent {
         this.toggleFullscreen = toggleFullscreen;
         this.leaveFullscreen = leaveFullscreen;
         game.setDoubleBuffered(false);
+        game.useExternalClock();   // one clock for movement and painting: see GamePanel.frameTick
         game.setSize(MapData.W, MapData.H);   // GamePanel is never shown itself: we paint it
         setPreferredSize(new Dimension(MapData.W, MapData.H));
         setMinimumSize(new Dimension(MapData.W / 2, MapData.H / 2));
@@ -82,10 +85,54 @@ public class GameView extends JComponent {
             }
         });
 
-        new javax.swing.Timer(16, e -> {   // GamePanel is not on screen, so we do its repainting and cursor
-            setCursor(game.getCursor());
-            repaint();
-        }).start();
+        // On Windows a sleeping thread is woken only every ~15 ms unless some thread is asking for a finer clock. A
+        // thread that sleeps forever makes Java request the 1 ms clock for the whole program (a well-known trick).
+        Thread fineClock = new Thread(() -> {
+            try { Thread.sleep(Long.MAX_VALUE); } catch (InterruptedException ignored) { }
+        }, "fine-clock");
+        fineClock.setDaemon(true);
+        fineClock.start();
+
+        Thread clock = new Thread(this::runClock, "frame-clock");   // GamePanel is not on screen, so we drive its frames
+        clock.setDaemon(true);
+        clock.setPriority(Thread.MAX_PRIORITY);   // a little less likely to be kept waiting by other programs
+        clock.start();
+        javax.swing.SwingUtilities.invokeLater(() -> Thread.currentThread().setPriority(Thread.MAX_PRIORITY - 2));   // the drawing thread
+    }
+
+    private final java.util.concurrent.atomic.AtomicInteger framesInFlight = new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * Starts a frame 60 times a second at exact moments, however long the previous frame took. (A repeating Swing
+     * timer waits a fixed delay after the last tick instead, so every slow frame pushes all later ones back.)
+     * Sleeps for most of the wait and spins for the last stretch, because sleeping alone is not precise enough.
+     */
+    private void runClock() {
+        final long period = 1_000_000_000L / 60;
+        long next = System.nanoTime() + period;
+        while (true) {
+            long wait = next - System.nanoTime() - 1_000_000L;
+            if (wait > 0) java.util.concurrent.locks.LockSupport.parkNanos(wait);
+            while (System.nanoTime() < next) Thread.onSpinWait();
+            // One frame may be running and one waiting. A frame that overruns its slot by a little then just starts
+            // a little late; only when frames really pile up (the computer cannot keep 60) is a beat skipped.
+            if (framesInFlight.incrementAndGet() <= 2) {
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    try { frame(); } finally { framesInFlight.decrementAndGet(); }
+                });
+            } else {
+                framesInFlight.decrementAndGet();
+            }
+            next += period;
+            if (next < System.nanoTime()) next = System.nanoTime() + period;   // fell behind: restart the rhythm, no burst
+        }
+    }
+
+    /** One frame: paint right now if the window is on screen, otherwise just keep the game moving. */
+    private void frame() {
+        setCursor(game.getCursor());
+        if (isShowing()) paintImmediately(0, 0, getWidth(), getHeight());
+        else game.frameTick();
     }
 
     /** Pixels per world pixel: the whole arena plus MARGIN on every side must fit. */
@@ -112,6 +159,9 @@ public class GameView extends JComponent {
 
     private boolean errorShown;
 
+    /** Time spent in the last frame, in nanoseconds: game update, world drawing, copy to the window, text and UI. A diagnostic aid. */
+    static final long[] PHASE_NS = new long[4];
+
     @Override
     protected void paintComponent(Graphics g0) {
         try {
@@ -136,9 +186,11 @@ public class GameView extends JComponent {
         //  1. the battlefield is drawn into an image with one pixel per screen pixel and copied 1:1;
         //  2. all text and UI (GamePanel.paintOverlay) is then drawn straight onto the window at native resolution,
         //     so glyphs are rasterised once and never resampled, even when pass 1 had to drop to a lower resolution.
+        long started = System.nanoTime();
+        game.frameTick();   // update positions for exactly the moment this frame will be shown
+        long tTick = System.nanoTime();
         java.awt.GraphicsConfiguration gc = getGraphicsConfiguration();
         double dpi = gc == null ? 1.0 : gc.getDefaultTransform().getScaleX();
-        long started = System.nanoTime();
         double s = scale() * dpi;                       // real screen pixels per world pixel
         double rs = Math.min(s, renderCap);             // only when the computer is slow: draw the world smaller, then enlarge
         double vw = getWidth() / scale(), vh = getHeight() / scale(), vx0 = worldX0(), vy0 = worldY0();
@@ -155,6 +207,7 @@ public class GameView extends JComponent {
         game.setView(vx0, vy0, vw, vh);
         game.paintWorld(fg);
         fg.dispose();
+        long tWorld = System.nanoTime();
 
         Graphics2D g = (Graphics2D) g0.create();
         java.awt.geom.AffineTransform origin = g.getTransform();   // where this component starts, in device pixels
@@ -165,21 +218,47 @@ public class GameView extends JComponent {
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             g.drawImage(frame, 0, 0, pw, ph, null);                // fills the whole window: no bars
         }
+        long tCopy = System.nanoTime();
         g.scale(pw / vw, ph / vh);
         g.translate(-vx0, -vy0);
         g.clip(new java.awt.geom.Rectangle2D.Double(vx0, vy0, vw, vh));
         game.paintOverlay(g);
         g.dispose();
+        long tEnd = System.nanoTime();
+        PHASE_NS[0] = tTick - started; PHASE_NS[1] = tWorld - tTick; PHASE_NS[2] = tCopy - tWorld; PHASE_NS[3] = tEnd - tCopy;
 
         // Adapt to slow computers: if drawing takes too long, draw at a slightly smaller size from now on.
         // It only ever steps down, so the picture can never flip back and forth. The first frames are
         // ignored: they include one-off work such as preparing the stretched background.
-        frames++;
-        if (frames > 40) {
-            avgMs = avgMs * 0.9 + Math.min(80, (System.nanoTime() - started) / 1e6) * 0.1;
-            if (avgMs > 26 && renderCap > 1.0) {
-                renderCap = Math.max(1.0, Math.min(renderCap, s) - 0.15);
-                avgMs = 18;
+        long now = System.nanoTime();
+        if (firstFrameNs == 0) firstFrameNs = started;
+        if (now - firstFrameNs > 5_000_000_000L) {   // ignore the first five seconds: Java is still warming up and every frame is slow
+            if (windowStartNs == 0) windowStartNs = now;
+            windowMs += Math.min(80, (now - started) / 1e6);
+            windowFrames++;
+            if (now - windowStartNs >= 2_000_000_000L && windowFrames >= 10) {   // every two seconds, judge the average frame cost
+                double avg = windowMs / windowFrames;
+                windowMs = 0;
+                windowFrames = 0;
+                windowStartNs = now;
+                // 60 frames a second leaves 16.7 ms per frame. Above about 14 ms on average, the slowest frames no
+                // longer fit and movement starts to judder. First give up the optional effects (they cost about half
+                // of the world drawing); only if that is still not enough, draw at a slightly smaller size.
+                if (avg > 14 && game.effectsOn() && !effectsSwitchedOff) {
+                    if (++slowWindows >= 2) {   // slow twice in a row, not just one busy moment
+                        effectsSwitchedOff = true;   // once only: if the player turns them back on with F, respect that
+                        game.setEffects(false);
+                        game.tell("Effects switched off to keep the game smooth. Press F to turn them back on.");
+                        slowWindows = 0;
+                    }
+                } else if (avg > 20) {
+                    if (++slowWindows >= 2 && renderCap > 1.0) {   // slow twice in a row, not just one busy moment
+                        renderCap = Math.max(1.0, Math.min(renderCap, s) - 0.15);
+                        slowWindows = 0;
+                    }
+                } else {
+                    slowWindows = 0;
+                }
             }
         }
     }

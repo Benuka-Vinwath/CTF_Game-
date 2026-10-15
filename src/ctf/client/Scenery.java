@@ -160,6 +160,25 @@ final class Scenery {
 
         rim(g);
         pillars(g);
+
+        // Everything below never changes while the window keeps its size, so it is drawn ONCE into this cached
+        // picture instead of every frame: the stone walls and their shadows, the light pooled at each base,
+        // and the fire light of every torch and brazier. Only the flames themselves still animate.
+        for (double[] w : MapData.WALLS) Art.wall(g, w);
+        for (int t = 0; t < 2; t++) {
+            double[] b = MapData.BASES[t];
+            Art.glow(g, Art.FX[t], b[0], b[1], 130, 0.30f);
+            g.setColor(new Color(Art.FX[t].getRed(), Art.FX[t].getGreen(), Art.FX[t].getBlue(), 40));
+            g.fill(new Ellipse2D.Double(b[0] - b[2], b[1] - b[2], b[2] * 2, b[2] * 2));
+        }
+        Color fire = new Color(255, 140, 40);
+        for (double[] w : MapData.WALLS) Art.glow(g, fire, w[0] + w[2] / 2, w[1] + 3 - 12, 64, 0.34f);
+        for (double[] b : braziers) Art.glow(g, fire, b[0], b[1] - 12 * 1.3, (int) (64 * 1.3), 0.34f);
+
+        // Edge shading over the visible part of the picture. Blending it over a full window every frame cost
+        // about 3 ms; baked in, it is free.
+        Art.vignette(g, rx + PAD, ry + PAD, rw - 2 * PAD, rh - 2 * PAD);
+
         g.dispose();
         return im;
     }
