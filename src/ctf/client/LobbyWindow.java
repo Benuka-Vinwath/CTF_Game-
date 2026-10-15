@@ -195,6 +195,7 @@ public class LobbyWindow extends JFrame implements NetEvents {
         if (panel != null || client == null) return;
         NetClient c = client;
         GamePanel gp = new GamePanel(c, myId);
+        Music.start();   // dark empire battle theme for as long as the match window is open
         gameView = new GameView(gp, this::toggleFullscreen, this::leaveFullscreen);
         gameFrame = new JFrame("Capture the Flag - " + Protocol.cleanName(nameField.getText()));
         gameFrame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);

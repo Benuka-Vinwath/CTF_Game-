@@ -29,6 +29,7 @@ public class Demo implements NetLink {
         Demo d = new Demo();
         SwingUtilities.invokeLater(() -> {
             GamePanel gp = new GamePanel(d, ME);
+            Music.start();
             JFrame f = new JFrame("CTF client demo");
             f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             f.setResizable(false);

@@ -121,6 +121,7 @@ public class GamePanel extends JPanel {
                 }
                 if (k == KeyEvent.VK_L) link.toggleLagSim();
                 if (k == KeyEvent.VK_V) shakeOn = !shakeOn;
+                if (k == KeyEvent.VK_M) Music.toggle();
                 if (k == KeyEvent.VK_F) fx = !fx; // optional effects off if they cost frames
                 if ((k == KeyEvent.VK_ENTER || k == KeyEvent.VK_SPACE) && last != null && last.winner >= 0) {
                     setCursor(Cursor.getDefaultCursor());
@@ -990,7 +991,7 @@ public class GamePanel extends JPanel {
 
         // bottom left: compact controls guide
         g.setFont(Type.ui(11.5f, false));
-        Art.textCenter(g, "WASD move   MOUSE aim/fire   TAB scores   F11 fullscreen   F fx " + (fx ? "on" : "off") + "   V shake " + (shakeOn ? "on" : "off") + "   L lag",
+        Art.textCenter(g, "WASD move   MOUSE aim/fire   TAB scores   F11 fullscreen   M music " + (Music.isOn() ? "on" : "off") + "   F fx " + (fx ? "on" : "off") + "   V shake " + (shakeOn ? "on" : "off") + "   L lag",
             x0, w, y0 + h - 10, new Color(235, 232, 255, 200));
 
         // event feed
