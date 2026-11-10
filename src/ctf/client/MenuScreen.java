@@ -146,8 +146,13 @@ final class MenuScreen extends JComponent {
         setCursor(Cursor.getPredefinedCursor(over ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
     }
 
+    /** The last thing drawn is on top, so it gets the click: a button inside a card wins over the card. */
     private void click() {
-        for (Object[] h : new ArrayList<>(hits)) if (((Shape) h[0]).contains(mouse)) { ((Runnable) h[1]).run(); repaint(); return; }
+        List<Object[]> snapshot = new ArrayList<>(hits);
+        for (int i = snapshot.size() - 1; i >= 0; i--) {
+            Object[] h = snapshot.get(i);
+            if (((Shape) h[0]).contains(mouse)) { ((Runnable) h[1]).run(); repaint(); return; }
+        }
     }
 
     private void drag() {

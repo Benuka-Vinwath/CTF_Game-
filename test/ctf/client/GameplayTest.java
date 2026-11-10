@@ -45,6 +45,7 @@ public class GameplayTest {
         runTest("Typography Fonts Resolve & Pixel-Art Sprites Scale By Whole Pixels", GameplayTest::testTypographyAndSprites);
         runTest("Wide/Tall Windows Are Filled With Scenery (No Black Bars)", GameplayTest::testViewFillsWindow);
         runTest("Lobby Room Draws, Ready Button Clicks, ENTER Chat Sends", GameplayTest::testLobbyRoom);
+        runTest("Menu: Clicking HOST And JOIN Buttons Reaches The Game", GameplayTest::testMenuButtons);
 
         System.out.println("\n=== Test Results Summary ===");
         System.out.println("Passed: " + passed + " | Failed: " + failed);
@@ -526,6 +527,36 @@ public class GameplayTest {
         paintOnEdt(panel, g);
         g.dispose();
         assertTrue(true, "switching from the lobby to the match paints without errors");
+    }
+
+    /** The HOST / JOIN buttons sit inside their cards; a click must reach the button, not just select the card. */
+    static void testMenuButtons() {
+        java.util.List<String> did = new java.util.ArrayList<>();
+        MenuScreen menu = new MenuScreen(new MenuScreen.Actions() {
+            public void host() { did.add("host"); }
+            public void join(String address) { did.add("join " + address); }
+            public void quit() {}
+            public void toggleFullscreen() {}
+            public boolean fullscreen() { return false; }
+        });
+        menu.setSize(1600, 900);   // 1:1 with the menu's canvas, so canvas points are pixels
+        menu.setAddress("localhost");
+        BufferedImage img = new BufferedImage(1600, 900, BufferedImage.TYPE_INT_RGB);
+        Runnable paint = () -> { Graphics2D g = img.createGraphics(); menu.paint(g); g.dispose(); };
+        java.util.function.BiConsumer<Integer, Integer> click = (x, y) -> {
+            for (java.awt.event.MouseListener l : menu.getMouseListeners())
+                l.mousePressed(new java.awt.event.MouseEvent(menu, java.awt.event.MouseEvent.MOUSE_PRESSED, 0, 0, x, y, 1, false, java.awt.event.MouseEvent.BUTTON1));
+        };
+        onEdt(() -> {
+            paint.run();
+            click.accept(200, 500);   // PLAY on the main menu
+            paint.run();
+            click.accept(217, 703);   // HOST button inside the host card
+            paint.run();
+            click.accept(697, 711);   // JOIN button inside the join card
+        });
+        assertTrue(did.contains("host"), "clicking HOST hosts (" + did + ")");
+        assertTrue(did.contains("join localhost"), "clicking JOIN joins the typed address (" + did + ")");
     }
 
     static void onEdt(Runnable r) {
