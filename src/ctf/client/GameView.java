@@ -103,6 +103,11 @@ public class GameView extends JComponent {
 
     private final java.util.concurrent.atomic.AtomicInteger framesInFlight = new java.util.concurrent.atomic.AtomicInteger();
 
+    private volatile boolean running = true;
+
+    /** Stops the frame clock when the game is closed and the window goes back to the menu. */
+    void stop() { running = false; }
+
     /**
      * Starts a frame 60 times a second at exact moments, however long the previous frame took. (A repeating Swing
      * timer waits a fixed delay after the last tick instead, so every slow frame pushes all later ones back.)
@@ -111,7 +116,7 @@ public class GameView extends JComponent {
     private void runClock() {
         final long period = 1_000_000_000L / 60;
         long next = System.nanoTime() + period;
-        while (true) {
+        while (running) {
             long wait = next - System.nanoTime() - 1_000_000L;
             if (wait > 0) java.util.concurrent.locks.LockSupport.parkNanos(wait);
             while (System.nanoTime() < next) Thread.onSpinWait();

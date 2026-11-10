@@ -105,6 +105,7 @@ public class GamePanel extends JPanel {
     private final Map<Integer, Object[]> bubbles = new HashMap<>(); // player id -> {text, expiryNs}: chat above heads
     private final Rectangle2D.Double readyBtn = new Rectangle2D.Double(), startBtn = new Rectangle2D.Double(); // world units
     private boolean hoverReady, hoverStart;
+    private final Rectangle2D.Double[] modeBtns = {new Rectangle2D.Double(), new Rectangle2D.Double(), new Rectangle2D.Double(), new Rectangle2D.Double()};
 
     public GamePanel(NetLink link, int myId) {
         this.link = link;
@@ -162,7 +163,9 @@ public class GamePanel extends JPanel {
                 if (inLobby()) {
                     hoverReady = readyBtn.contains(mouseX, mouseY);
                     hoverStart = startBtn.contains(mouseX, mouseY);
-                    setCursor(Cursor.getPredefinedCursor(hoverReady || hoverStart ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                    boolean overMode = false;
+                    if (amHost()) for (Rectangle2D.Double r : modeBtns) overMode |= r.contains(mouseX, mouseY);
+                    setCursor(Cursor.getPredefinedCursor(hoverReady || hoverStart || overMode ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                 } else if (last != null && last.winner >= 0) {
                     boolean autoLb = (last.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
                     boolean showingLb = autoLb || viewLeaderboardManual;
@@ -185,6 +188,8 @@ public class GamePanel extends JPanel {
                 if (inLobby()) { // buttons take the click; it does not also fire a shot
                     if (readyBtn.contains(e.getX(), e.getY())) { link.sendReady(!amReady()); return; }
                     if (startBtn.contains(e.getX(), e.getY())) { if (lobbyCanStart()) link.sendBegin(); return; }
+                    for (int i = 0; i < 4; i++)
+                        if (modeBtns[i].contains(e.getX(), e.getY())) { if (amHost()) link.sendMode(i + 1); return; }
                 }
                 if (last != null && last.winner >= 0) {
                     boolean autoLb = (last.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
@@ -267,8 +272,31 @@ public class GamePanel extends JPanel {
     private boolean lobbyCanStart() {
         Protocol.Lobby l = link.lobby();
         if (l == null || l.entries().size() < l.minPlayers()) return false;
-        for (Protocol.LobbyEntry e : l.entries()) if (!e.ready()) return false;
-        return true;
+        int[] team = new int[2];
+        for (Protocol.LobbyEntry e : l.entries()) {
+            if (!e.ready()) return false;
+            team[Math.max(0, Math.min(1, e.team()))]++;
+        }
+        return l.minPlayers() <= 1 || (team[0] == l.mode() && team[1] == l.mode());   // both teams full, like the server
+    }
+
+    /** Host only: the 1v1 .. 4v4 buttons above START. Others see the chosen size, greyed. */
+    private void drawModePicker(Graphics2D g, double x, double y, double w) {
+        Protocol.Lobby l = link.lobby();
+        int mode = l == null ? 1 : l.mode();
+        boolean host = amHost();
+        g.setFont(Type.ui(11.5f, true));
+        Art.text(g, host ? "MATCH SIZE" : "MATCH SIZE (host picks)", x, y - 6, new Color(170, 150, 235));
+        double bw = (w - 3 * 8) / 4;
+        for (int i = 0; i < 4; i++) {
+            Rectangle2D.Double r = modeBtns[i];
+            r.setRect(x + i * (bw + 8), y, bw, 34);
+            boolean on = mode == i + 1, hover = host && r.contains(mouseX, mouseY);
+            Color c = on ? GOLD : hover ? new Color(200, 190, 240) : new Color(110, 95, 160);
+            Art.plate(g, r.x, r.y, r.width, r.height, 7, c, time, fx && on);
+            g.setFont(Type.numbers(16));
+            Art.textCenter(g, (i + 1) + "v" + (i + 1), r.x, r.width, r.y + 23, on ? GOLD : host ? Color.WHITE : new Color(150, 145, 175));
+        }
     }
 
     private void typeKey(KeyEvent e) {
@@ -311,6 +339,8 @@ public class GamePanel extends JPanel {
     boolean effectsOn() { return fx; }
 
     void setEffects(boolean on) { fx = on; }
+
+    void setShake(boolean on) { shakeOn = on; }
 
     /** Shows a short message in the event feed. */
     void tell(String message) { say(message); }
@@ -941,8 +971,9 @@ public class GamePanel extends JPanel {
             startBtn.setRect(bx - bw - 12, by, bw, bh);
             boolean ok = lobbyCanStart() && s.countdown <= 0;
             lobbyButton(g, startBtn, ok ? new Color(255, 120, 70) : new Color(110, 105, 135), hoverStart && ok,
-                s.countdown > 0 ? "STARTING..." : "START MATCH", ok ? "everyone is ready" : s.countdown > 0 ? "get ready" : "waiting for everyone");
+                s.countdown > 0 ? "STARTING..." : "START MATCH", ok ? "everyone is ready" : s.countdown > 0 ? "get ready" : "full teams, all ready");
         } else startBtn.setRect(0, 0, 0, 0);
+        drawModePicker(g, bx - bw - 12, by - 50, bw * 2 + 12);
 
         if (s.countdown > 0) { // big centre countdown, each number popping in
             int n = (int) Math.ceil(s.countdown);

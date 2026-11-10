@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The ThroneFall - menu design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --gold: #ffcd5a; --gold-hi: #fff1c4; --gold-lo: #b9822a; --gold-dk: #5e3d0c;
+    --violet: #aa96eb; --stone: #6e5fa0;
+    --red: #eb4646; --red-fx: #ff5a32; --blue: #4696ff; --blue-fx: #3cc8ff;
+    --text: #f4f0ff; --soft: #c8c4e1; --muted: #8f8aa8;
+    --title: "Cinzel Decorative", "Palatino Linotype", serif;
+    --display: "Cinzel", "Palatino Linotype", serif;
+    --ui: "Rajdhani", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #04030a; color: var(--text); font-family: "Segoe UI", sans-serif; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 36px 18px 80px; }
+  .page > h1 { font-family: var(--display); font-weight: 900; letter-spacing: .1em; margin: 0; font-size: 28px;
+    background: linear-gradient(180deg, var(--gold-hi), var(--gold) 45%, var(--gold-lo)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { color: var(--soft); font-size: 14.5px; line-height: 1.6; margin: 8px 0 0; max-width: 820px; }
+  .sec { display: flex; align-items: baseline; gap: 14px; margin: 46px 0 12px; }
+  .sec b { font-family: var(--display); font-weight: 900; font-size: 13px; letter-spacing: .25em; color: var(--gold); border: 1px solid rgba(255,205,90,.45); padding: 5px 10px; }
+  .sec span { font-family: var(--display); font-weight: 700; letter-spacing: .14em; color: var(--violet); font-size: 15px; }
+  .note { color: var(--soft); font-size: 13.5px; line-height: 1.65; margin: 12px 0 0; max-width: 1000px; }
+  .note em { color: var(--gold); font-style: normal; }
+
+  /* a game screen: 16:9, everything sized in container units so it scales like the real game */
+  .screen { position: relative; aspect-ratio: 16 / 9; width: 100%; overflow: hidden; border-radius: 6px; container-type: inline-size;
+    background: #07050f; box-shadow: 0 0 0 1px #221a38, 0 30px 80px rgba(0,0,0,.6); outline: none; }
+  .screen:focus-visible { box-shadow: 0 0 0 2px var(--gold), 0 30px 80px rgba(0,0,0,.6); }
+  .layer { position: absolute; inset: 0; }
+  canvas.embers { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+  /* ============ A · THRONE ROOM ============ */
+  .A .wall { background:
+      radial-gradient(ellipse 40% 60% at 72% 42%, rgba(120,90,200,.28), transparent 70%),
+      radial-gradient(ellipse 80% 70% at 30% 100%, rgba(40,20,70,.9), transparent 70%),
+      linear-gradient(180deg, #120c22 0%, #0b0716 60%, #06040c 100%); }
+  .A .bricks { opacity: .55; background:
+      repeating-linear-gradient(0deg, transparent 0 2.4cqw, rgba(0,0,0,.45) 2.4cqw calc(2.4cqw + 2px)),
+      repeating-linear-gradient(90deg, transparent 0 5cqw, rgba(0,0,0,.35) 5cqw calc(5cqw + 2px));
+      -webkit-mask: radial-gradient(ellipse 60% 70% at 70% 45%, #000 30%, transparent 80%); mask: radial-gradient(ellipse 60% 70% at 70% 45%, #000 30%, transparent 80%); }
+  .A .rays { mix-blend-mode: screen; animation: rays 7s ease-in-out infinite; transform-origin: 72% 0; }
+  @keyframes rays { 0%,100% { opacity: .85; } 50% { opacity: .55; } }
+  .A .fog { left: -50%; width: 200%; background:
+      radial-gradient(ellipse 18% 12% at 20% 86%, rgba(150,130,220,.22), transparent 70%),
+      radial-gradient(ellipse 22% 10% at 55% 90%, rgba(150,130,220,.18), transparent 70%),
+      radial-gradient(ellipse 16% 9% at 85% 84%, rgba(150,130,220,.2), transparent 70%);
+      animation: fog 38s linear infinite; }
+  .A .fog.f2 { animation-duration: 55s; animation-direction: reverse; opacity: .8; top: -3%; }
+  @keyframes fog { from { transform: translateX(0); } to { transform: translateX(25%); } }
+  .A .vignette { background: radial-gradient(ellipse 75% 75% at 60% 45%, transparent 40%, rgba(2,1,6,.85) 100%),
+      linear-gradient(90deg, rgba(3,2,8,.92) 0%, rgba(3,2,8,.55) 32%, transparent 52%); }
+  .A .art { position: absolute; right: 2%; bottom: 0; width: 64%; height: 100%; }
+  .A .crown { animation: bob 4.5s ease-in-out infinite; transform-origin: center; }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-1.2%); } }
+  .A .wave { animation: wave 3.2s ease-in-out infinite; transform-origin: top center; }
+  .A .wave.w2 { animation-delay: -1.6s; }
+  @keyframes wave { 0%,100% { transform: skewX(0deg) scaleY(1); } 50% { transform: skewX(-3deg) scaleY(.985); } }
+  .A .flick { animation: flick 1.8s steps(6) infinite; }
+  @keyframes flick { 0%,100% { opacity: 1; } 30% { opacity: .82; } 60% { opacity: .95; } 80% { opacity: .78; } }
+
+  .A .left { position: absolute; left: 6.2cqw; top: 6cqw; bottom: 6.4cqw; width: 50cqw; display: flex; flex-direction: column; }
+  .eyebrow { font-family: var(--display); font-weight: 700; letter-spacing: .6em; font-size: 1.15cqw; color: var(--soft); display: flex; align-items: center; gap: 1cqw; }
+  .eyebrow::before, .eyebrow::after { content: ""; height: 1px; width: 3.4cqw; background: linear-gradient(90deg, transparent, var(--gold)); }
+  .eyebrow::after { background: linear-gradient(90deg, var(--gold), transparent); }
+  .logo { position: relative; font-family: var(--title); font-weight: 900; font-size: 5cqw; line-height: .95; white-space: nowrap; letter-spacing: .02em; margin: .6cqw 0 0;
+    background: linear-gradient(180deg, #fffbe8 0%, var(--gold-hi) 22%, var(--gold) 48%, var(--gold-lo) 72%, #f3c35c 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 .25cqw 0 var(--gold-dk)) drop-shadow(0 0 1.6cqw rgba(255,190,80,.28)); }
+  .logo .shine { position: absolute; inset: 0; background: linear-gradient(100deg, transparent 40%, rgba(255,255,255,.95) 50%, transparent 60%);
+    background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shine 5.5s ease-in-out infinite; }
+  @keyframes shine { 0%,55% { background-position: 150% 0; } 85%,100% { background-position: -60% 0; } }
+  .motto { font-family: var(--display); font-weight: 700; letter-spacing: .48em; font-size: 1.05cqw; color: var(--violet); margin-top: 1.1cqw; }
+
+  .menu { margin-top: auto; display: flex; flex-direction: column; gap: .35cqw; }
+  .item { position: relative; display: grid; grid-template-columns: 3.2cqw 1fr; align-items: center; padding: .75cqw 1.2cqw .75cqw .6cqw;
+    cursor: pointer; transition: transform .22s cubic-bezier(.2,.8,.2,1); }
+  .item .num { font-family: var(--display); font-weight: 700; font-size: 1.05cqw; color: var(--stone); letter-spacing: .1em; transition: color .2s; }
+  .item .lab { font-family: var(--display); font-weight: 900; font-size: 2.05cqw; letter-spacing: .14em; color: rgba(200,196,225,.62); transition: color .2s, text-shadow .2s; }
+  .item .desc { grid-column: 2; font-family: var(--ui); font-weight: 600; font-size: 1.05cqw; letter-spacing: .06em; color: var(--muted);
+    max-height: 0; opacity: 0; overflow: hidden; transition: max-height .25s, opacity .25s, margin .25s; }
+  .item::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(255,205,90,.18), rgba(255,205,90,.05) 55%, transparent);
+    clip-path: polygon(0 0, 100% 0, 92% 100%, 0 100%); opacity: 0; transition: opacity .2s; }
+  .item::after { content: ""; position: absolute; left: 0; top: 18%; bottom: 18%; width: .3cqw; background: linear-gradient(var(--gold-hi), var(--gold), var(--gold-lo));
+    box-shadow: 0 0 1cqw rgba(255,205,90,.8); transform: scaleY(0); transition: transform .22s; }
+  .item.on { transform: translateX(1cqw); }
+  .item.on::before { opacity: 1; }
+  .item.on::after { transform: scaleY(1); }
+  .item.on .num { color: var(--gold); }
+  .item.on .lab { color: #fff; text-shadow: 0 0 1.4cqw rgba(255,205,90,.55); }
+  .item.on .desc { max-height: 2cqw; opacity: 1; margin-top: .15cqw; }
+  .item.quit .lab { color: rgba(225,140,140,.7); }
+  .item.quit.on .lab { color: #ffb4a8; text-shadow: 0 0 1.4cqw rgba(255,90,50,.6); }
+
+  .hud-foot { position: absolute; left: 6.2cqw; right: 3cqw; bottom: 2.4cqw; display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--ui); font-weight: 600; font-size: 1.05cqw; letter-spacing: .08em; color: var(--muted); }
+  .k { display: inline-flex; align-items: center; justify-content: center; min-width: 1.9cqw; height: 1.75cqw; padding: 0 .5cqw; margin: 0 .45cqw 0 1.2cqw;
+    border: 1px solid rgba(170,150,235,.55); border-bottom-width: 2px; border-radius: .3cqw; color: var(--soft); font-size: .95cqw; background: rgba(20,14,40,.6); }
+  .k:first-child { margin-left: 0; }
+  .status { display: flex; align-items: center; gap: .7cqw; }
+  .dot { width: .7cqw; height: .7cqw; border-radius: 50%; background: #6ee682; box-shadow: 0 0 .8cqw #6ee682; }
+
+  .profile { position: absolute; top: 2.4cqw; right: 3cqw; display: flex; align-items: center; gap: 1cqw; padding: .7cqw 1.4cqw .7cqw .8cqw;
+    background: linear-gradient(90deg, rgba(10,7,22,.2), rgba(10,7,22,.85)); border: 1px solid rgba(255,205,90,.28);
+    clip-path: polygon(1.2cqw 0, 100% 0, 100% 100%, 0 100%, 0 1.2cqw); }
+  .profile .who { font-family: var(--display); font-weight: 900; font-size: 1.35cqw; letter-spacing: .1em; }
+  .profile .sub { font-family: var(--ui); font-weight: 600; font-size: 1cqw; color: var(--muted); letter-spacing: .08em; }
+  .avatar { width: 3.6cqw; height: 3.6cqw; border: 1px solid var(--gold); background: radial-gradient(circle at 50% 35%, #2b2050, #0b0718); display: grid; place-items: center; }
+
+  /* ============ B · BANNER CLASH ============ */
+  .B .sideR { background: radial-gradient(ellipse 70% 90% at 0% 60%, rgba(235,70,70,.55), transparent 70%), linear-gradient(90deg, #2a0710, #12060f 60%);
+    clip-path: polygon(0 0, 56% 0, 44% 100%, 0 100%); }
+  .B .sideB { background: radial-gradient(ellipse 70% 90% at 100% 60%, rgba(60,140,255,.55), transparent 70%), linear-gradient(270deg, #061633, #070a1c 60%);
+    clip-path: polygon(56% 0, 100% 0, 100% 100%, 44% 100%); }
+  .B .seam { background: linear-gradient(101.5deg, transparent calc(50% - 1px), rgba(255,220,140,.95) 50%, transparent calc(50% + 1px)); filter: drop-shadow(0 0 .6cqw rgba(255,205,90,.9)); }
+  .B .burst { background: radial-gradient(circle at 50% 40%, rgba(255,215,120,.55), rgba(255,170,60,.12) 18%, transparent 36%); animation: pulse 3s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .75; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
+  .B .art { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .B .fall { animation: fall 4s cubic-bezier(.5,0,.6,1) infinite; transform-box: fill-box; transform-origin: center; }
+  @keyframes fall { 0% { transform: translateY(-6%) rotate(-10deg); } 50% { transform: translateY(2%) rotate(8deg); } 100% { transform: translateY(-6%) rotate(-10deg); } }
+  .B .center { position: absolute; left: 50%; top: 3.2cqw; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; width: 60cqw; }
+  .B .logo { font-size: 5.2cqw; text-align: center; }
+  .B .menu { margin-top: 1.4cqw; width: 26cqw; gap: .45cqw; }
+  .B .item { padding: .55cqw 1cqw !important; } .B .item .lab { font-size: 1.75cqw; }
+  .B .item { grid-template-columns: 1fr; text-align: center; padding: .85cqw 1cqw; background: rgba(6,4,14,.6); border: 1px solid rgba(170,150,235,.28);
+    clip-path: polygon(1.1cqw 0, calc(100% - 1.1cqw) 0, 100% 50%, calc(100% - 1.1cqw) 100%, 1.1cqw 100%, 0 50%); }
+  .B .item .num { display: none; }
+  .B .item .desc { grid-column: 1; }
+  .B .item.on { transform: scale(1.06); border-color: var(--gold); background: linear-gradient(90deg, rgba(235,70,70,.28), rgba(20,12,36,.9) 30%, rgba(20,12,36,.9) 70%, rgba(70,150,255,.28)); }
+  .B .item::before, .B .item::after { display: none; }
+  .B .vs { position: absolute; bottom: 3cqw; left: 50%; transform: translateX(-50%); font-family: var(--title); font-weight: 900; font-size: 2.2cqw; color: var(--gold);
+    text-shadow: 0 0 1.2cqw rgba(255,205,90,.6); letter-spacing: .2em; }
+  .B .hud-foot { left: 3cqw; }
+
+  /* ============ PLAY (style A) ============ */
+  .P .crumbs { position: absolute; left: 6.2cqw; top: 3.6cqw; font-family: var(--ui); font-weight: 700; font-size: 1.1cqw; letter-spacing: .3em; color: var(--muted); }
+  .P .crumbs b { color: var(--gold); font-weight: 700; }
+  .P h2 { position: absolute; left: 6.2cqw; top: 5.4cqw; margin: 0; font-family: var(--title); font-weight: 900; font-size: 4cqw; letter-spacing: .04em;
+    background: linear-gradient(180deg, var(--gold-hi), var(--gold) 50%, var(--gold-lo)); -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 .2cqw 0 var(--gold-dk)); }
+  .tiles { position: absolute; left: 6.2cqw; top: 13cqw; width: 58cqw; bottom: 7cqw; display: grid; grid-template-columns: 1fr 1fr; gap: 2cqw; }
+  .tile { position: relative; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; padding: 0 2cqw 2cqw;
+    border: 1px solid rgba(255,255,255,.08); transition: transform .25s cubic-bezier(.2,.8,.2,1), box-shadow .25s, border-color .25s;
+    clip-path: polygon(0 0, calc(100% - 2cqw) 0, 100% 2cqw, 100% 100%, 2cqw 100%, 0 calc(100% - 2cqw)); }
+  .tile.host { background: radial-gradient(ellipse 90% 70% at 50% 25%, rgba(255,90,50,.35), transparent 70%), linear-gradient(180deg, #2a0b16, #0d0610 75%); }
+  .tile.join { background: radial-gradient(ellipse 90% 70% at 50% 25%, rgba(60,170,255,.35), transparent 70%), linear-gradient(180deg, #08183a, #070814 75%); }
+  .tile:hover, .tile.on { transform: translateY(-.6cqw); border-color: var(--gold); box-shadow: 0 1.5cqw 3cqw rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,205,90,.6); }
+  .tile svg.ill { display: block; margin: 0 -2cqw 1cqw; width: calc(100% + 4cqw); height: 40%; flex: none; }
+  .tile h3 { margin: 0; font-family: var(--display); font-weight: 900; font-size: 2.3cqw; letter-spacing: .12em; }
+  .tile p { margin: .5cqw 0 0; font-family: var(--ui); font-weight: 600; font-size: 1.15cqw; color: var(--soft); letter-spacing: .03em; line-height: 1.35; }
+  .chip { display: inline-flex; align-items: center; gap: .6cqw; margin-top: 1cqw; padding: .45cqw .9cqw; font-family: var(--ui); font-weight: 700; font-size: 1.25cqw; letter-spacing: .08em;
+    background: rgba(0,0,0,.45); border: 1px solid rgba(255,205,90,.45); color: var(--gold-hi); width: max-content; }
+  .input { margin-top: 1cqw; display: flex; align-items: center; gap: .6cqw; padding: .55cqw .9cqw; background: rgba(0,0,0,.5); border: 1px solid var(--blue-fx);
+    font-family: var(--ui); font-weight: 700; font-size: 1.3cqw; letter-spacing: .06em; color: #fff; box-shadow: 0 0 1cqw rgba(60,200,255,.25); }
+  .input i { width: 2px; height: 1.4cqw; background: var(--blue-fx); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .recent { display: flex; gap: .5cqw; margin-top: .7cqw; }
+  .recent span { font-family: var(--ui); font-weight: 600; font-size: 1cqw; color: var(--soft); padding: .25cqw .6cqw; border: 1px solid rgba(170,150,235,.35); }
+  .go { margin-top: auto; align-self: flex-start; font-family: var(--display); font-weight: 900; font-size: 1.25cqw; letter-spacing: .25em; padding: .8cqw 2cqw;
+    color: #1a0f02; background: linear-gradient(180deg, var(--gold-hi), var(--gold) 50%, var(--gold-lo));
+    clip-path: polygon(.8cqw 0, 100% 0, calc(100% - .8cqw) 100%, 0 100%); }
+  .knightCard { position: absolute; right: 5cqw; top: 9cqw; bottom: 7cqw; width: 25cqw; display: flex; flex-direction: column; align-items: center;
+    background: linear-gradient(180deg, rgba(20,14,40,.75), rgba(8,5,18,.9)); border: 1px solid rgba(255,205,90,.3);
+    clip-path: polygon(2cqw 0, 100% 0, 100% calc(100% - 2cqw), calc(100% - 2cqw) 100%, 0 100%, 0 2cqw); padding: 2cqw 1.6cqw; }
+  .knightCard .cap { font-family: var(--ui); font-weight: 700; font-size: 1cqw; letter-spacing: .3em; color: var(--violet); }
+  .knightCard .stage { position: relative; flex: 1; width: 100%; display: grid; place-items: center; }
+  .knightCard .stage::before { content: ""; position: absolute; bottom: 12%; width: 60%; height: 10%; border-radius: 50%;
+    background: radial-gradient(ellipse, rgba(255,205,90,.4), transparent 70%); }
+  .knightCard svg { width: 46%; image-rendering: pixelated; position: relative; animation: bob 3s ease-in-out infinite; }
+  .picker { display: flex; align-items: center; justify-content: space-between; width: 100%; font-family: var(--display); font-weight: 900; font-size: 1.4cqw; letter-spacing: .14em; }
+  .arrow { width: 2.6cqw; height: 2.6cqw; display: grid; place-items: center; border: 1px solid rgba(255,205,90,.5); color: var(--gold); font-size: 1.3cqw; }
+  .name { margin-top: 1cqw; width: 100%; text-align: center; padding: .6cqw; border-top: 1px solid rgba(255,205,90,.25);
+    font-family: var(--display); font-weight: 900; font-size: 1.7cqw; letter-spacing: .12em; }
+  .back { position: absolute; left: 6.2cqw; bottom: 2.4cqw; font-family: var(--ui); font-weight: 700; font-size: 1.1cqw; letter-spacing: .25em; color: var(--soft); }
+
+  /* palette / type */
+  .sw { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .sw div { border: 1px solid #221a38; background: #0c0918; font-size: 12px; color: var(--soft); }
+  .sw i { display: block; height: 46px; }
+  .sw p { margin: 0; padding: 8px 10px; line-height: 1.45; }
+  .sw p b { color: #fff; display: block; }
+  .types { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .types div { border: 1px solid #221a38; background: #0c0918; padding: 14px 16px; color: var(--muted); font-size: 12.5px; }
+  .pick { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 760px) { .pick { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>THE THRONEFALL</h1>
+  <p class="lead">Two directions for the title screen. Both are animated and work: hover the menu, or click a screen and use the arrow keys. Pick one; the Play, Settings, How to play and Credits screens will follow its style (Play is shown below in style A). Everything here can be drawn by the game itself, the same way it already draws the arena.</p>
+
+  <!-- ===================== A ===================== -->
+  <div class="sec"><b>A</b><span>Throne room</span></div>
+  <div class="screen A" tabindex="0" data-menu>
+    <div class="layer wall"></div>
+    <div class="layer bricks"></div>
+    <svg class="art" viewBox="0 0 640 540" preserveAspectRatio="xMidYMax meet" aria-hidden="true">
+      <defs>
+        <linearGradient id="ray" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9c8ff" stop-opacity=".55"/><stop offset="1" stop-color="#9c84ff" stop-opacity="0"/></linearGradient>
+        <linearGradient id="stone" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2d2347"/><stop offset="1" stop-color="#110c20"/></linearGradient>
+        <linearGradient id="throne" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d1531"/><stop offset="1" stop-color="#07050d"/></linearGradient>
+        <linearGradient id="goldG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff1c4"/><stop offset=".45" stop-color="#ffcd5a"/><stop offset="1" stop-color="#b9822a"/></linearGradient>
+        <radialGradient id="halo"><stop offset="0" stop-color="#ffd98a" stop-opacity=".8"/><stop offset=".35" stop-color="#ffb84a" stop-opacity=".25"/><stop offset="1" stop-color="#ffb84a" stop-opacity="0"/></radialGradient>
+        <radialGradient id="torchL"><stop offset="0" stop-color="#ff9a3c" stop-opacity=".55"/><stop offset="1" stop-color="#ff5a20" stop-opacity="0"/></radialGradient>
+        <linearGradient id="redB" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c8303a"/><stop offset="1" stop-color="#6e121c"/></linearGradient>
+        <linearGradient id="bluB" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2f6fd6"/><stop offset="1" stop-color="#0f2b66"/></linearGradient>
+      </defs>
+      <!-- gothic window -->
+      <path d="M300 40 Q300 -10 345 -10 Q390 -10 390 40 L390 170 L300 170 Z" fill="#1b1436" stroke="#3a2d62" stroke-width="6"/>
+      <path d="M312 46 Q312 6 345 6 Q378 6 378 46 L378 162 L312 162 Z" fill="#8e7cf0" opacity=".55"/>
+      <path d="M345 6 V162 M312 84 H378" stroke="#2a2048" stroke-width="5"/>
+      <!-- light shafts -->
+      <g class="rays">
+        <polygon points="312,60 378,60 520,540 170,540" fill="url(#ray)" opacity=".55"/>
+        <polygon points="330,60 350,60 380,540 280,540" fill="url(#ray)" opacity=".5"/>
+      </g>
+      <!-- pillars -->
+      <rect x="120" y="0" width="58" height="540" fill="url(#stone)"/><rect x="114" y="0" width="70" height="22" fill="#3a2d5c"/>
+      <rect x="512" y="0" width="58" height="540" fill="url(#stone)"/><rect x="506" y="0" width="70" height="22" fill="#3a2d5c"/>
+      <!-- banners -->
+      <g class="wave"><path d="M196 40 H262 V230 L229 205 L196 230 Z" fill="url(#redB)"/><path d="M196 40 H262 V52 H196 Z" fill="#ffcd5a"/>
+        <path d="M229 100 l14 22 h-28 z M229 150 l-12 -10 h24 z" fill="#ffcd5a" opacity=".85"/></g>
+      <g class="wave w2"><path d="M430 40 H496 V230 L463 205 L430 230 Z" fill="url(#bluB)"/><path d="M430 40 H496 V52 H430 Z" fill="#ffcd5a"/>
+        <path d="M463 100 l14 22 h-28 z M463 150 l-12 -10 h24 z" fill="#ffcd5a" opacity=".85"/></g>
+      <!-- steps -->
+      <rect x="150" y="470" width="390" height="70" fill="#0d0918"/><rect x="150" y="470" width="390" height="4" fill="#3a2d5c"/>
+      <rect x="190" y="430" width="310" height="44" fill="#140e24"/><rect x="190" y="430" width="310" height="4" fill="#4a3a74"/>
+      <rect x="226" y="396" width="238" height="38" fill="#1a1230"/><rect x="226" y="396" width="238" height="4" fill="#5a4890"/>
+      <!-- throne -->
+      <path d="M270 400 L270 250 Q270 196 300 176 L345 150 L390 176 Q420 196 420 250 L420 400 Z" fill="url(#throne)" stroke="#4e3d80" stroke-width="3"/>
+      <path d="M296 250 Q296 214 345 196 Q394 214 394 250 L394 340 L296 340 Z" fill="#3a0f22" opacity=".9"/>
+      <rect x="250" y="320" width="34" height="80" fill="#181029" stroke="#4e3d80" stroke-width="3"/>
+      <rect x="406" y="320" width="34" height="80" fill="#181029" stroke="#4e3d80" stroke-width="3"/>
+      <rect x="282" y="338" width="126" height="24" fill="#241838" stroke="#6a55a8" stroke-width="2"/>
+      <circle cx="345" cy="165" r="7" fill="#ffcd5a"/>
+      <!-- crown over the throne -->
+      <circle cx="345" cy="118" r="90" fill="url(#halo)" class="flick"/>
+      <g class="crown">
+        <path d="M313 132 L309 96 L325 110 L345 86 L365 110 L381 96 L377 132 Z" fill="url(#goldG)" stroke="#5e3d0c" stroke-width="2.5"/>
+        <rect x="311" y="130" width="68" height="11" rx="2" fill="url(#goldG)" stroke="#5e3d0c" stroke-width="2.5"/>
+        <circle cx="345" cy="114" r="5" fill="#eb4646"/><circle cx="325" cy="122" r="3.4" fill="#4696ff"/><circle cx="365" cy="122" r="3.4" fill="#4696ff"/>
+      </g>
+      <!-- torches -->
+      <circle cx="149" cy="250" r="70" fill="url(#torchL)" class="flick"/><circle cx="541" cy="250" r="70" fill="url(#torchL)" class="flick"/>
+      <rect x="141" y="252" width="16" height="10" fill="#3a2d5c"/><rect x="533" y="252" width="16" height="10" fill="#3a2d5c"/>
+      <path class="flick" d="M149 252 Q138 236 149 218 Q160 236 149 252" fill="#ffb040"/><path class="flick" d="M541 252 Q530 236 541 218 Q552 236 541 252" fill="#ffb040"/>
+    </svg>
+    <div class="layer fog"></div><div class="layer fog f2"></div>
+    <canvas class="embers"></canvas>
+    <div class="layer vignette"></div>
+
+    <div class="left">
+      <div class="eyebrow">THE</div>
+      <div class="logo">THRONEFALL<span class="shine" aria-hidden="true">THRONEFALL</span></div>
+      <div class="motto">CAPTURE &middot; HOLD &middot; CONQUER</div>
+      <nav class="menu" aria-label="Main menu">
+        <div class="item on"><span class="num">I</span><span class="lab">PLAY</span><span class="desc">Host a game or join a friend</span></div>
+        <div class="item"><span class="num">II</span><span class="lab">HOW TO PLAY</span><span class="desc">Rules, controls and tips</span></div>
+        <div class="item"><span class="num">III</span><span class="lab">SETTINGS</span><span class="desc">Display, sound and network test</span></div>
+        <div class="item"><span class="num">IV</span><span class="lab">CREDITS</span><span class="desc">The people behind the throne</span></div>
+        <div class="item quit"><span class="num">V</span><span class="lab">QUIT</span><span class="desc">Leave the throne room</span></div>
+      </nav>
+    </div>
+    <div class="profile">
+      <div class="avatar"><svg viewBox="0 0 18 18" width="78%" shape-rendering="crispEdges" aria-hidden="true">
+        <rect x="5" y="1" width="8" height="2" fill="#ffcd5a"/><rect x="5" y="0" width="2" height="2" fill="#ffcd5a"/><rect x="11" y="0" width="2" height="2" fill="#ffcd5a"/>
+        <rect x="5" y="3" width="8" height="6" fill="#c8c4e1"/><rect x="6" y="6" width="6" height="2" fill="#1a1428"/>
+        <rect x="3" y="9" width="12" height="9" fill="#eb4646"/><rect x="7" y="10" width="4" height="6" fill="#ffcd5a"/></svg></div>
+      <div><div class="who">KNIGHT_07</div><div class="sub">Crown &middot; last server: localhost</div></div>
+    </div>
+    <div class="hud-foot">
+      <span><span class="k">&uarr;</span><span class="k">&darr;</span>CHOOSE <span class="k">ENTER</span>SELECT <span class="k">F11</span>FULLSCREEN</span>
+      <span class="status"><span class="dot"></span>LAN READY &nbsp;&middot;&nbsp; v1.0</span>
+    </div>
+  </div>
+  <p class="note"><em>Feel:</em> cinematic and calm, like a AAA title screen. Moonlight falls through the window onto an empty throne with the crown floating above it. Fog drifts, the banners wave and sparks rise. The menu sits on the left; the selected line slides right with a gold blade and shows a one-line hint. Your player card (name, hat and last server) is top right.</p>
+
+  <!-- ===================== B ===================== -->
+  <div class="sec"><b>B</b><span>Banner clash</span></div>
+  <div class="screen B" tabindex="0" data-menu>
+    <div class="layer" style="background:#07050f"></div>
+    <div class="layer sideR"></div><div class="layer sideB"></div>
+    <div class="layer burst"></div>
+    <svg class="art" viewBox="0 0 960 540" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="goldB" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff1c4"/><stop offset=".45" stop-color="#ffcd5a"/><stop offset="1" stop-color="#b9822a"/></linearGradient>
+        <linearGradient id="trail" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffcd5a" stop-opacity="0"/><stop offset="1" stop-color="#ffcd5a" stop-opacity=".45"/></linearGradient>
+      </defs>
+      <!-- huge banners -->
+      <g class="wave" style="transform-origin:110px 0"><path d="M40 -10 H190 V330 L115 290 L40 330 Z" fill="#a8222e" opacity=".9"/><path d="M40 -10 H190 V10 H40 Z" fill="#ffcd5a"/>
+        <path d="M115 120 l26 40 h-52 z" fill="#ffcd5a" opacity=".8"/></g>
+      <g class="wave w2" style="transform-origin:850px 0"><path d="M770 -10 H920 V330 L845 290 L770 330 Z" fill="#1f4fb0" opacity=".9"/><path d="M770 -10 H920 V10 H770 Z" fill="#ffcd5a"/>
+        <path d="M845 120 l26 40 h-52 z" fill="#ffcd5a" opacity=".8"/></g>
+      <!-- knights facing each other (pixel style, big) -->
+      <g transform="translate(120 330) scale(9)" shape-rendering="crispEdges">
+        <rect x="5" y="0" width="8" height="7" fill="#c8c4e1"/><rect x="7" y="3" width="6" height="2" fill="#1a1428"/>
+        <rect x="3" y="7" width="12" height="9" fill="#eb4646"/><rect x="7" y="8" width="4" height="6" fill="#ffcd5a"/>
+        <rect x="15" y="9" width="7" height="2" fill="#5a4f78"/><rect x="21" y="8" width="2" height="4" fill="#ff5a32"/>
+        <rect x="5" y="16" width="3" height="6" fill="#5a4f78"/><rect x="10" y="16" width="3" height="6" fill="#5a4f78"/>
+      </g>
+      <g transform="translate(840 330) scale(-9 9)" shape-rendering="crispEdges">
+        <rect x="5" y="0" width="8" height="7" fill="#c8c4e1"/><rect x="7" y="3" width="6" height="2" fill="#1a1428"/>
+        <rect x="3" y="7" width="12" height="9" fill="#4696ff"/><rect x="7" y="8" width="4" height="6" fill="#ffcd5a"/>
+        <rect x="15" y="9" width="7" height="2" fill="#5a4f78"/><rect x="21" y="8" width="2" height="4" fill="#3cc8ff"/>
+        <rect x="5" y="16" width="3" height="6" fill="#5a4f78"/><rect x="10" y="16" width="3" height="6" fill="#5a4f78"/>
+      </g>
+    </svg>
+    <div class="layer seam"></div>
+    <canvas class="embers"></canvas>
+    <div class="center">
+      <div class="eyebrow">THE</div>
+      <div class="logo">THRONEFALL<span class="shine" aria-hidden="true">THRONEFALL</span></div>
+      <svg viewBox="0 0 120 70" style="width:7cqw;margin-top:.8cqw;overflow:visible" aria-hidden="true">
+        <rect x="52" y="-40" width="16" height="44" fill="url(#trail)"/>
+        <g class="fall"><path d="M32 52 L28 18 L44 32 L60 8 L76 32 L92 18 L88 52 Z" fill="url(#goldB)" stroke="#5e3d0c" stroke-width="2.5"/>
+          <rect x="30" y="50" width="60" height="10" rx="2" fill="url(#goldB)" stroke="#5e3d0c" stroke-width="2.5"/><circle cx="60" cy="36" r="4.5" fill="#eb4646"/></g>
+      </svg>
+      <nav class="menu" aria-label="Main menu">
+        <div class="item on"><span class="num"></span><span class="lab">PLAY</span><span class="desc">Host a game or join a friend</span></div>
+        <div class="item"><span class="num"></span><span class="lab">HOW TO PLAY</span><span class="desc">Rules, controls and tips</span></div>
+        <div class="item"><span class="num"></span><span class="lab">SETTINGS</span><span class="desc">Display, sound and network test</span></div>
+        <div class="item"><span class="num"></span><span class="lab">CREDITS</span><span class="desc">The people behind the throne</span></div>
+        <div class="item quit"><span class="num"></span><span class="lab">QUIT</span><span class="desc">Leave the battlefield</span></div>
+      </nav>
+    </div>
+    <div class="hud-foot">
+      <span><span class="k">&uarr;</span><span class="k">&darr;</span>CHOOSE <span class="k">ENTER</span>SELECT</span>
+      <span class="status"><span class="dot"></span>LAN READY &nbsp;&middot;&nbsp; v1.0</span>
+    </div>
+  </div>
+  <p class="note"><em>Feel:</em> loud and competitive, like a fighting game. The screen is split by a glowing gold seam, red against blue. The two knights face off, and the crown keeps falling and swinging between them (the "fall" in ThroneFall). The menu is centred, and the selected button grows and picks up both team colours.</p>
+
+  <!-- ===================== PLAY ===================== -->
+  <div class="sec"><b>A</b><span>Play screen in the throne-room style</span></div>
+  <div class="screen A P" tabindex="0">
+    <div class="layer wall"></div>
+    <div class="layer bricks"></div>
+    <div class="layer fog"></div>
+    <canvas class="embers"></canvas>
+    <div class="layer vignette" style="background: radial-gradient(ellipse 80% 80% at 50% 45%, transparent 45%, rgba(2,1,6,.85) 100%)"></div>
+    <div class="crumbs">MAIN MENU &nbsp;/&nbsp; <b>PLAY</b></div>
+    <h2>Choose your path</h2>
+    <div class="tiles">
+      <div class="tile host on">
+        <svg class="ill" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <path d="M0 200 L0 150 Q80 120 150 135 Q230 150 300 125 L300 200 Z" fill="#14060c"/>
+          <rect x="120" y="70" width="60" height="90" fill="#1c0d1a" stroke="#4a1f2a" stroke-width="3"/>
+          <path d="M112 70 h76 v-12 h-10 v8 h-10 v-8 h-10 v8 h-10 v-8 h-10 v8 h-10 v-8 h-16 z" fill="#25101f"/>
+          <rect x="140" y="120" width="20" height="40" fill="#0a0408"/>
+          <circle cx="150" cy="44" r="40" fill="#ff5a32" fill-opacity=".22" class="flick"/>
+          <path class="flick" d="M150 58 Q138 42 150 22 Q162 42 150 58" fill="#ffb040"/>
+          <rect x="140" y="56" width="20" height="6" fill="#4a1f2a"/>
+        </svg>
+        <h3 style="color:#ffb8a8">HOST A GAME</h3>
+        <p>Light the beacon. You run the server and choose 1v1, 2v2, 3v3 or 4v4 in the lobby.</p>
+        <span class="chip">YOUR ADDRESS &nbsp;192.168.1.25</span>
+        <span class="go">HOST</span>
+      </div>
+      <div class="tile join">
+        <svg class="ill" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <path d="M0 200 L0 140 Q90 150 150 130 Q220 110 300 140 L300 200 Z" fill="#060a18"/>
+          <path d="M150 200 Q140 160 150 130" stroke="#3cc8ff" stroke-width="3" stroke-dasharray="6 6" fill="none" opacity=".7"/>
+          <path d="M105 130 V80 Q105 50 150 50 Q195 50 195 80 V130 Z" fill="#0c1430" stroke="#1f3a7a" stroke-width="3"/>
+          <path d="M120 130 V88 Q120 66 150 66 Q180 66 180 88 V130 Z" fill="#3cc8ff" fill-opacity=".25" class="flick"/>
+          <path d="M120 130 V88 Q120 66 150 66 Q180 66 180 88 V130" fill="none" stroke="#3cc8ff" stroke-width="2"/>
+          <path d="M150 66 V130 M120 100 H180" stroke="#1f3a7a" stroke-width="3"/>
+        </svg>
+        <h3 style="color:#a8d6ff">JOIN A GAME</h3>
+        <p>March to a friend's castle. Type the address on their screen.</p>
+        <div class="input">192.168.1.25<i></i></div>
+        <div class="recent"><span>localhost</span><span>192.168.1.25</span></div>
+        <span class="go" style="background:linear-gradient(180deg,#c9f0ff,#3cc8ff 50%,#1f6fb0);color:#031226">JOIN</span>
+      </div>
+    </div>
+    <div class="knightCard">
+      <div class="cap">YOUR KNIGHT</div>
+      <div class="stage">
+        <svg viewBox="0 0 18 26" shape-rendering="crispEdges" aria-hidden="true">
+          <rect x="5" y="1" width="8" height="2" fill="#ffcd5a"/><rect x="5" y="0" width="2" height="2" fill="#ffcd5a"/><rect x="8" y="-1" width="2" height="3" fill="#ffcd5a"/><rect x="11" y="0" width="2" height="2" fill="#ffcd5a"/>
+          <rect x="5" y="3" width="8" height="6" fill="#c8c4e1"/><rect x="6" y="6" width="6" height="2" fill="#1a1428"/>
+          <rect x="3" y="9" width="12" height="8" fill="#eb4646"/><rect x="7" y="10" width="4" height="5" fill="#ffcd5a"/>
+          <rect x="5" y="17" width="3" height="7" fill="#5a4f78"/><rect x="10" y="17" width="3" height="7" fill="#5a4f78"/>
+          <rect x="4" y="24" width="4" height="2" fill="#2c2540"/><rect x="10" y="24" width="4" height="2" fill="#2c2540"/>
+        </svg>
+      </div>
+      <div class="picker"><span class="arrow">&lsaquo;</span><span>CROWN</span><span class="arrow">&rsaquo;</span></div>
+      <div class="name">KNIGHT_07</div>
+    </div>
+    <div class="back">&larr; &nbsp;BACK &nbsp;<span class="k">ESC</span></div>
+  </div>
+  <p class="note">Two big picture tiles instead of forms: <em>Host</em> is a castle with a lit beacon (red), <em>Join</em> is a glowing gate (blue). The selected tile lifts with a gold edge. Your knight stands on the right in a spotlight; the arrows change the hat before you even join.</p>
+
+  <!-- ===================== palette ===================== -->
+  <div class="sec"><b>&#9670;</b><span>Colours</span></div>
+  <div class="sw">
+    <div><i style="background:#07050f"></i><p><b>Abyss</b>#07050F &middot; background</p></div>
+    <div><i style="background:linear-gradient(180deg,#120c22,#06040c)"></i><p><b>Throne stone</b>#120C22 &rarr; #06040C</p></div>
+    <div><i style="background:linear-gradient(180deg,#fff1c4,#ffcd5a 50%,#b9822a)"></i><p><b>Royal gold</b>#FFF1C4 / #FFCD5A / #B9822A</p></div>
+    <div><i style="background:#aa96eb"></i><p><b>Moonlight violet</b>#AA96EB &middot; labels</p></div>
+    <div><i style="background:#6e5fa0"></i><p><b>Old stone</b>#6E5FA0 &middot; inactive</p></div>
+    <div><i style="background:linear-gradient(90deg,#eb4646,#ff5a32)"></i><p><b>Red banner</b>#EB4646 / #FF5A32</p></div>
+    <div><i style="background:linear-gradient(90deg,#4696ff,#3cc8ff)"></i><p><b>Blue banner</b>#4696FF / #3CC8FF</p></div>
+    <div><i style="background:#f4f0ff"></i><p><b>Parchment</b>#F4F0FF / #C8C4E1</p></div>
+  </div>
+  <div class="sec"><b>&#9670;</b><span>Fonts</span></div>
+  <div class="types">
+    <div><div style="font-family:var(--title);font-weight:900;font-size:30px;background:linear-gradient(180deg,#fff1c4,#ffcd5a 50%,#b9822a);-webkit-background-clip:text;background-clip:text;color:transparent">ThroneFall</div>Cinzel Decorative: the logo only</div>
+    <div><div style="font-family:var(--display);font-weight:900;font-size:22px;letter-spacing:.14em;color:#fff">HOW TO PLAY</div>Cinzel: menu items, headings, buttons</div>
+    <div><div style="font-family:var(--ui);font-weight:700;font-size:22px;letter-spacing:.06em;color:#c8c4e1">192.168.1.25 &middot; 2v2</div>Rajdhani: hints, numbers, addresses</div>
+  </div>
+  <p class="note">All three fonts are free (SIL Open Font License). They would ship inside the game as .ttf files, so they look the same on every computer.</p>
+</div>
+
+<script>
+  document.querySelectorAll('[data-menu]').forEach(function (screen) {
+    var items = Array.prototype.slice.call(screen.querySelectorAll('.item'));
+    function pick(i) { items.forEach(function (it, k) { it.classList.toggle('on', k === i); }); }
+    items.forEach(function (it, i) { it.addEventListener('mouseenter', function () { pick(i); }); });
+    screen.addEventListener('keydown', function (e) {
+      var i = items.findIndex(function (it) { return it.classList.contains('on'); });
+      if (e.key === 'ArrowDown' || e.key === 's') { pick((i + 1) % items.length); e.preventDefault(); }
+      if (e.key === 'ArrowUp' || e.key === 'w') { pick((i + items.length - 1) % items.length); e.preventDefault(); }
+    });
+  });
+  document.querySelectorAll('.tile').forEach(function (t) {
+    t.addEventListener('mouseenter', function () { document.querySelectorAll('.tile').forEach(function (o) { o.classList.toggle('on', o === t); }); });
+  });
+
+  document.querySelectorAll('canvas.embers').forEach(function (cv) {
+    var ctx = cv.getContext('2d'), parts = [], split = cv.closest('.B') !== null;
+    function size() { var r = cv.getBoundingClientRect(); cv.width = r.width; cv.height = r.height; }
+    size(); window.addEventListener('resize', size);
+    for (var i = 0; i < 70; i++) parts.push(spawn(true));
+    function spawn(any) {
+      var x = Math.random();
+      var warm = split ? x < 0.5 : Math.random() < 0.7;
+      return { x: x, y: any ? Math.random() : 1.05, s: 0.02 + Math.random() * 0.05, r: 0.8 + Math.random() * 1.8,
+               p: Math.random() * 6.28, c: warm ? (split ? '255,110,70' : '255,160,70') : (split ? '90,190,255' : '200,180,255') };
+    }
+    var last = performance.now();
+    function frame(t) {
+      var dt = Math.min(0.05, (t - last) / 1000); last = t;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      for (var i = 0; i < parts.length; i++) {
+        var e = parts[i];
+        e.y -= e.s * dt; e.p += dt * 1.6;
+        if (e.y < -0.05) { parts[i] = spawn(false); continue; }
+        var a = Math.min(1, e.y * 2) * (0.5 + 0.5 * Math.sin(e.p * 2));
+        ctx.fillStyle = 'rgba(' + e.c + ',' + (0.85 * a).toFixed(3) + ')';
+        ctx.beginPath(); ctx.arc((e.x + Math.sin(e.p) * 0.006) * cv.width, e.y * cv.height, e.r, 0, 6.283); ctx.fill();
+      }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+</script>
+</body>
+</html>

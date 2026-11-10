@@ -19,7 +19,7 @@ import java.util.concurrent.LinkedBlockingQueue;
  * takes lines from an outbox queue and writes them to the socket, so game logic never waits on a
  * slow client's network. A client that stops reading entirely (queue over MAX_QUEUE) is dropped.
  *
- * Commands (client to server): HELLO team name, READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text,
+ * Commands (client to server): HELLO team name [hat colour], MODE n (host: n players per team), READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text,
  * BEGIN (host starts the countdown), LOOK hat colour, AGAIN (back to the lobby after a match), BYE
  */
 public class ClientHandler implements Runnable, Conn {
@@ -72,10 +72,10 @@ public class ClientHandler implements Runnable, Conn {
 
         if (player == null) {
             if (!cmd.equals("HELLO")) { send("ERROR send HELLO <team> <name> first"); return true; }
-            String[] a = arg.split(" ", 2);
+            String[] a = arg.split(" ");   // HELLO team name [hat colour]; cleanName keeps the name free of spaces
             int team = parseInt(a[0], -1);
             String name = Protocol.cleanName(a.length > 1 ? a[1] : "");
-            player = game.addPlayer(name, team, this);
+            player = game.addPlayer(name, team, a.length > 2 ? parseInt(a[2], 0) : 0, a.length > 3 ? parseInt(a[3], 0) : 0, this);
             if (player == null) { send("ERROR server full"); return false; }
             System.out.println("[tcp] " + name + " connected from " + socket.getRemoteSocketAddress());
             return true;
@@ -89,6 +89,7 @@ public class ClientHandler implements Runnable, Conn {
             case "RTT"     -> game.setPing(player.id, parseInt(arg, 0)); // client reports it for the scoreboard
             case "CHAT"    -> game.chat(player.id, arg);
             case "BEGIN"   -> game.begin(player.id);                     // host only; the server checks
+            case "MODE"    -> game.setMode(player.id, parseInt(arg, 0)); // host only: 1v1 .. 4v4
             case "LOOK"    -> {
                 String[] a = arg.split(" ");
                 game.setLook(player.id, parseInt(a[0], 0), a.length > 1 ? parseInt(a[1], 0) : 0);

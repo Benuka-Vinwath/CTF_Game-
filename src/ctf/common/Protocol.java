@@ -30,7 +30,8 @@ public final class Protocol {
 
     public record LobbyEntry(int id, int team, boolean ready, int hat, int hatColor, int targetHits, String name) {}
 
-    public record Lobby(String phase, int minPlayers, int hostId, List<LobbyEntry> entries) {}
+    /** mode: players per team (1 = 1v1 ... 4 = 4v4). */
+    public record Lobby(String phase, int minPlayers, int hostId, int mode, List<LobbyEntry> entries) {}
 
     private static String f1(double v) { return String.format(Locale.ROOT, "%.1f", v); }
 
@@ -168,32 +169,33 @@ public final class Protocol {
         return out;
     }
 
-    /** LOBBY phase minPlayers hostId id:team:ready:hat:hatColor:targetHits:name,... (name last: cleanName keeps it free of : and ,) */
-    public static String encodeLobby(String phase, int minPlayers, int hostId, List<LobbyEntry> entries) {
+    /** LOBBY phase minPlayers hostId mode id:team:ready:hat:hatColor:targetHits:name,... (name last: cleanName keeps it free of : and ,) */
+    public static String encodeLobby(String phase, int minPlayers, int hostId, int mode, List<LobbyEntry> entries) {
         StringJoiner sj = new StringJoiner(",");
         for (LobbyEntry e : entries) {
             sj.add(e.id() + ":" + e.team() + ":" + (e.ready() ? 1 : 0) + ":" + e.hat() + ":" + e.hatColor()
                     + ":" + e.targetHits() + ":" + e.name());
         }
-        return "LOBBY " + phase + " " + minPlayers + " " + hostId + " " + sj;
+        return "LOBBY " + phase + " " + minPlayers + " " + hostId + " " + mode + " " + sj;
     }
 
     public static Lobby decodeLobby(String line) {
-        String[] t = line.trim().split(" ", 5);
-        if (t.length < 4 || !t[0].equals("LOBBY")) return null;
+        String[] t = line.trim().split(" ", 6);
+        if (t.length < 5 || !t[0].equals("LOBBY")) return null;
         List<LobbyEntry> entries = new ArrayList<>();
         try {
             int min = Integer.parseInt(t[2]);
             int host = Integer.parseInt(t[3]);
-            if (t.length == 5 && !t[4].isEmpty()) {
-                for (String e : t[4].split(",")) {
+            int mode = Integer.parseInt(t[4]);
+            if (t.length == 6 && !t[5].isEmpty()) {
+                for (String e : t[5].split(",")) {
                     String[] p = e.split(":", 7);
                     if (p.length < 7) continue;
                     entries.add(new LobbyEntry(Integer.parseInt(p[0]), Integer.parseInt(p[1]), p[2].equals("1"),
                             Integer.parseInt(p[3]), Integer.parseInt(p[4]), Integer.parseInt(p[5]), p[6]));
                 }
             }
-            return new Lobby(t[1], min, host, entries);
+            return new Lobby(t[1], min, host, mode, entries);
         } catch (NumberFormatException e) {
             return null;
         }

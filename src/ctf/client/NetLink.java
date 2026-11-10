@@ -17,6 +17,8 @@ public interface NetLink {
     /** Host only: start the countdown. The server ignores anyone else. */
     default void sendBegin() {}
     default void sendLook(int hat, int color) {}
+    /** Host only: players per team, 1 (1v1) to 4 (4v4). */
+    default void sendMode(int perTeam) {}
     /** The latest LOBBY list from the server (names, teams, ready, host, hats), or null. */
     default Protocol.Lobby lobby() { return null; }
 }

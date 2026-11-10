@@ -472,7 +472,7 @@ public class GameplayTest {
     /** The panel's own timer mutates particle lists on the Swing thread, so painting must happen there too, as in the real game. */
     static void testLobbyRoom() {
         java.util.List<String> sent = new java.util.ArrayList<>();
-        ctf.common.Protocol.Lobby lobby = new ctf.common.Protocol.Lobby("LOBBY", 2, 0, java.util.List.of(
+        ctf.common.Protocol.Lobby lobby = new ctf.common.Protocol.Lobby("LOBBY", 2, 0, 1, java.util.List.of(
             new ctf.common.Protocol.LobbyEntry(0, 0, false, 2, 1, 0, "You"),
             new ctf.common.Protocol.LobbyEntry(1, 1, true, 4, 3, 5, "Ann")));
         NetLink link = new NetLink() {

@@ -28,7 +28,8 @@ javac --release 17 -d out ^
   src\ctf\client\LobbyRoom.java ^
   src\ctf\client\GamePanel.java ^
   src\ctf\client\GameView.java ^
-  src\ctf\client\LobbyWindow.java ^
+  src\ctf\client\MenuScreen.java ^
+  src\ctf\client\GameWindow.java ^
   src\ctf\client\Main.java ^
   src\ctf\client\SelfCheck.java ^
   src\ctf\client\Demo.java ^

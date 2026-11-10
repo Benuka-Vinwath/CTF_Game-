@@ -56,6 +56,7 @@ public class GameState {
     private double tentCooldown;
     private double endElapsed;
     private double countdown;     // > 0 while the host's start is counting down in the lobby
+    private int mode = 1;         // players per team: 1 = 1v1 ... 4 = 4v4. The host picks it; it grows when a team overflows
     private int winner = -1;
     private long tick;
     private int nextId = 1;
@@ -72,10 +73,17 @@ public class GameState {
 
     // ------------------------------------------------------------------ lobby (TCP threads)
 
-    public synchronized Player addPlayer(String name, int team, Conn conn) {
+    public synchronized Player addPlayer(String name, int team, Conn conn) { return addPlayer(name, team, 0, 0, conn); }
+
+    /** hat and hatColor were chosen in the main menu; they are wrapped into range like setLook does. */
+    public synchronized Player addPlayer(String name, int team, int hat, int hatColor, Conn conn) {
         if (players.size() >= MAX_PLAYERS) return null;
         if (team != 0 && team != 1) team = teamSize(0) <= teamSize(1) ? 0 : 1;   // auto-balance
+        if (teamSize(team) >= MAX_TEAM) team = 1 - team;
+        if (teamSize(team) >= mode) mode = teamSize(team) + 1;   // a full team: the match grows (1v1 -> 2v2)
         Player p = new Player(nextId++, name, team, rng.nextInt(Integer.MAX_VALUE), conn);
+        p.hat = Math.floorMod(hat, LobbyMap.HATS);
+        p.hatColor = Math.floorMod(hatColor, LobbyMap.HAT_COLORS);
         players.put(p.id, p);
         conn.send("WELCOME " + p.id + " " + p.token + " " + udpPort + " " + p.team);
         if (phase == Phase.LOBBY) {
@@ -112,8 +120,16 @@ public class GameState {
     public synchronized void changeTeam(int id, int team) {
         Player p = players.get(id);
         if (p == null || phase != Phase.LOBBY || (team != 0 && team != 1)) return;
-        if (p.team != team && teamSize(team) >= MAX_TEAM) return;   // that team is full
+        if (p.team != team && teamSize(team) >= mode) return;   // that team is full
         p.team = team;
+        broadcastLobby();
+    }
+
+    /** Host only: the match size (1 = 1v1 ... 4 = 4v4). Refused if a team already has more players than that. */
+    public synchronized void setMode(int id, int n) {
+        if (id != hostId() || phase != Phase.LOBBY || n < 1 || n > MAX_TEAM || n < teamSize(0) || n < teamSize(1)) return;
+        mode = n;
+        checkCountdown();
         broadcastLobby();
     }
 
@@ -147,6 +163,8 @@ public class GameState {
 
     private boolean canStart() {
         if (phase != Phase.LOBBY || players.size() < minPlayers) return false;
+        // both teams must be full (2v2 needs 2 and 2); a server started for 1 player is the solo test server
+        if (minPlayers > 1 && (teamSize(0) != mode || teamSize(1) != mode)) return false;
         for (Player p : players.values()) if (!p.ready) return false;
         return true;
     }
@@ -236,7 +254,7 @@ public class GameState {
             p.inputAge += DT;
             move(p, LobbyMap.WALLS);
             int pad = LobbyMap.padAt(p.x, p.y);
-            if (pad >= 0 && pad != p.team && teamSize(pad) < MAX_TEAM) {
+            if (pad >= 0 && pad != p.team && teamSize(pad) < mode) {
                 p.team = pad;
                 changed = true;
             }
@@ -531,7 +549,7 @@ public class GameState {
         List<Protocol.LobbyEntry> list = new ArrayList<>();
         for (Player p : players.values())
             list.add(new Protocol.LobbyEntry(p.id, p.team, p.ready, p.hat, p.hatColor, p.targetHits, p.name));
-        broadcast(Protocol.encodeLobby(phase.name(), minPlayers, hostId(), list));
+        broadcast(Protocol.encodeLobby(phase.name(), minPlayers, hostId(), mode, list));
     }
 
     private void broadcastStats() {
@@ -567,6 +585,8 @@ public class GameState {
     synchronized double tentCooldown() { return tentCooldown; }
 
     synchronized double countdown() { return countdown; }
+
+    synchronized int mode() { return mode; }
 
     synchronized void setTimeLeft(double seconds) { timeLeft = seconds; }
 }

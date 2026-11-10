@@ -203,26 +203,28 @@ final class LobbyRoom {
             if (e.targetHits() > best) { best = e.targetHits(); bestName = e.name(); }
             if (e.id() == lobby.hostId()) host = e.name();
         }
-        int min = lobby == null ? 2 : lobby.minPlayers();
+        int mode = lobby == null ? 1 : lobby.mode();
+        boolean full = count[0] == mode && count[1] == mode;
 
         g.setFont(Art.title(17));
         for (int t = 0; t < 2; t++) {
             double[] p = LobbyMap.PADS[t];
             Art.textCenter(g, GamePanel.TEAM_NAME[t] + " TEAM", p[0] - 100, 200, p[1] - p[2] - 14, GamePanel.TEAM[t].brighter());
             g.setFont(Type.ui(12, true));
-            Art.textCenter(g, count[t] + " / " + LobbyMap.MAX_TEAM + "   stand here to join", p[0] - 100, 200, p[1] + p[2] + 22, new Color(220, 215, 240));
+            Art.textCenter(g, count[t] + " / " + mode + (count[t] < mode ? "   stand here to join" : "   full"),
+                p[0] - 100, 200, p[1] + p[2] + 22, new Color(220, 215, 240));
             g.setFont(Art.title(17));
         }
 
         double[] bw = LobbyMap.WALLS[4];
         double bx = bw[0] + 10, bwid = bw[2] - 20;
         g.setFont(Type.ui(13, true));
-        Art.textCenter(g, "PLAYERS " + total + "/" + LobbyMap.MAX_PLAYERS + "     RED " + count[0] + "  vs  BLUE " + count[1],
+        Art.textCenter(g, mode + "v" + mode + "     RED " + count[0] + "/" + mode + "  ·  BLUE " + count[1] + "/" + mode,
             bx, bwid, bw[1] + 28, new Color(225, 225, 255));
-        Art.textCenter(g, "READY " + ready + "/" + total + (total < min ? "     need " + min + " players" : ""),
-            bx, bwid, bw[1] + 46, ready == total && total >= min ? new Color(120, 240, 140) : new Color(200, 195, 230));
+        Art.textCenter(g, "READY " + ready + "/" + total + (full ? "" : "     teams not full yet"),
+            bx, bwid, bw[1] + 46, ready == total && full ? new Color(120, 240, 140) : new Color(200, 195, 230));
         String status = countdown > 0 ? "MATCH STARTS IN " + (int) Math.ceil(countdown)
-            : ready == total && total >= min ? "Waiting for host " + host + " to start" : "Host: " + host;
+            : ready == total && full ? "Waiting for host " + host + " to start" : "Host: " + host;
         Art.textCenter(g, status, bx, bwid, bw[1] + 64, countdown > 0 ? new Color(255, 205, 90) : new Color(170, 165, 210));
 
         g.setFont(Type.ui(11.5f, true));

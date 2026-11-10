@@ -44,13 +44,23 @@ final class Sfx {
         return b;
     }
 
+    /** 0 = silent, 1 = full; set from the Settings screen. */
+    static volatile float volume = 1f;
+
     static void play(String name) {
-        byte[] d = CLIPS.get(name);
-        if (d == null) return;
+        byte[] clip = CLIPS.get(name);
+        float v = volume;
+        if (clip == null || v <= 0) return;
+        byte[] d = clip;
+        if (v < 1) {   // the clips are tiny, so scaling a copy is cheaper than finding a mixer gain control
+            d = clip.clone();
+            for (int i = 0; i < d.length; i++) d[i] = (byte) (d[i] * v);
+        }
+        final byte[] out = d;
         AUDIO.execute(() -> {
             try {
                 Clip c = AudioSystem.getClip();
-                c.open(FMT, d, 0, d.length);
+                c.open(FMT, out, 0, out.length);
                 c.addLineListener(e -> { if (e.getType() == LineEvent.Type.STOP) c.close(); });
                 c.start();
             } catch (Exception | Error ignored) { /* no audio device */ }

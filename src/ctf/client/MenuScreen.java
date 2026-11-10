@@ -1,0 +1,997 @@
+package ctf.client;
+
+import ctf.common.LobbyMap;
+
+import javax.swing.JComponent;
+import javax.swing.Timer;
+import java.awt.*;
+import java.awt.event.*;
+import java.awt.font.TextLayout;
+import java.awt.geom.*;
+import java.awt.image.BufferedImage;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+import java.util.prefs.Preferences;
+
+/**
+ * The ThroneFall title screen ("Throne room" design, docs/menu-design.html) and its pages: Play, How to play,
+ * Settings and Credits. Everything is laid out on a 1600x900 canvas that is scaled to the window; the scene behind
+ * it fills the whole window. Still parts are drawn once into images per window size, so a frame only draws what moves.
+ * Choices (name, hat, last address, settings) are remembered between runs with java.util.prefs.
+ */
+final class MenuScreen extends JComponent {
+    /** What the menu asks the game window to do. */
+    interface Actions {
+        void host();
+        void join(String address);
+        void quit();
+        void toggleFullscreen();
+        boolean fullscreen();
+    }
+
+    static final int VW = 1600, VH = 900;
+    private enum Page { MAIN, PLAY, HOWTO, SETTINGS, CREDITS }
+    private static final String[] ITEMS = {"PLAY", "HOW TO PLAY", "SETTINGS", "CREDITS", "QUIT"};
+    private static final String[] HINTS = {"Host a game or join a friend", "Rules, controls and tips", "Display, sound and network test",
+        "The people behind the throne", "Leave the throne room"};
+    private static final String[] NUMERALS = {"I", "II", "III", "IV", "V"};
+    private static final String[] COLOR_NAMES = {"GOLD", "SILVER", "ROSE", "JADE", "VIOLET", "CYAN"};
+
+    static final Color GOLD = new Color(255, 205, 90), GOLD_HI = new Color(255, 241, 196), GOLD_LO = new Color(185, 130, 42),
+        GOLD_DK = new Color(94, 61, 12), VIOLET = new Color(170, 150, 235), STONE = new Color(110, 95, 160),
+        SOFT = new Color(200, 196, 225), MUTED = new Color(143, 138, 168), RED_FX = new Color(255, 90, 50), BLUE_FX = new Color(60, 200, 255);
+
+    private final Actions actions;
+    private final Preferences prefs = Preferences.userNodeForPackage(MenuScreen.class);
+    private Page page = Page.MAIN;
+    private int sel;                      // selected main-menu item
+    private int tile;                     // Play page: 0 host, 1 join
+    private boolean editName;             // Play page: typing goes into the name instead of the address
+    private final StringBuilder name = new StringBuilder(), address = new StringBuilder();
+    private int hat, hatColor;
+    private boolean fx, shake;
+    private float volume;
+    private int lagDelay, lagLoss;
+    private String status = "";
+    private boolean statusError, busy;
+    private String lanAddress = "...";
+    private int dragSlider = -1;
+
+    private final Timer timer = new Timer(16, e -> repaint());
+    private double time;
+    private long lastNs = System.nanoTime();
+    private final double[][] embers = new double[80][5];   // x, y (0..1), speed, phase, warm?
+    private final Random rnd = new Random(7);
+
+    // hit boxes on the 1600x900 canvas, refilled every frame by the drawing code
+    private final List<Object[]> hits = new ArrayList<>();   // {Shape, Runnable}
+    private final AffineTransform toCanvas = new AffineTransform();
+    private Point2D mouse = new Point2D.Double(-1, -1);
+
+    private BufferedImage back, backPage, fogImg, logoImg;   // cached still pictures (see ensureCache)
+    private double logoX, logoY;
+    private double cacheScale;
+    private int cacheW, cacheH;
+    private Shape logoShape;
+
+    MenuScreen(Actions actions) {
+        this.actions = actions;
+        name.append(prefs.get("name", System.getProperty("user.name", "Knight")));
+        address.append(prefs.get("address", "localhost"));
+        hat = prefs.getInt("hat", 1);
+        hatColor = prefs.getInt("hatColor", 0);
+        fx = prefs.getBoolean("fx", true);
+        shake = prefs.getBoolean("shake", true);
+        volume = prefs.getFloat("volume", 0.8f);
+        lagDelay = prefs.getInt("lagDelay", 0);
+        lagLoss = prefs.getInt("lagLoss", 0);
+        Sfx.volume = volume;
+        for (double[] e : embers) spawn(e, true);
+        setPreferredSize(new Dimension(1280, 720));
+        setFocusable(true);
+        setFocusTraversalKeysEnabled(false);
+        setBackground(Color.BLACK);
+        addKeyListener(new KeyAdapter() {
+            @Override public void keyPressed(KeyEvent e) { key(e); }
+        });
+        MouseAdapter m = new MouseAdapter() {
+            @Override public void mouseMoved(MouseEvent e) { mouse = canvas(e); hover(); }
+            @Override public void mouseDragged(MouseEvent e) { mouse = canvas(e); drag(); }
+            @Override public void mousePressed(MouseEvent e) { requestFocusInWindow(); mouse = canvas(e); click(); }
+            @Override public void mouseReleased(MouseEvent e) { dragSlider = -1; save(); }
+        };
+        addMouseListener(m);
+        addMouseMotionListener(m);
+        new Thread(() -> lanAddress = findLanAddress(), "lan-address").start();
+    }
+
+    // ------------------------------------------------------------------ what the game window reads
+
+    String playerName() { return ctf.common.Protocol.cleanName(name.toString()); }
+    int hat() { return hat; }
+    int hatColor() { return hatColor; }
+    boolean effects() { return fx; }
+    boolean shake() { return shake; }
+    int lagDelay() { return lagDelay; }
+    int lagLoss() { return lagLoss; }
+
+    void setAddress(String a) { address.setLength(0); address.append(a); }
+
+    void start() { timer.start(); requestFocusInWindow(); }
+    void stop() { timer.stop(); }
+
+    /** Shown under the Play tiles: "Connecting..." while busy, or why it failed in red. */
+    void setStatus(String text, boolean error, boolean busy) {
+        status = text;
+        statusError = error;
+        this.busy = busy;
+        if (!text.isEmpty()) page = Page.PLAY;   // messages belong under the Play tiles (also after a disconnect)
+    }
+
+    // ------------------------------------------------------------------ input
+
+    private Point2D canvas(MouseEvent e) {
+        try { return toCanvas.inverseTransform(new Point2D.Double(e.getX(), e.getY()), null); }
+        catch (NoninvertibleTransformException ex) { return new Point2D.Double(-1, -1); }
+    }
+
+    private void hover() {
+        if (page != Page.MAIN && page != Page.PLAY) return;
+        for (Object[] h : hits) if (((Shape) h[0]).contains(mouse) && h.length > 2) {
+            if (page == Page.MAIN) sel = (Integer) h[2]; else tile = (Integer) h[2];
+        }
+        boolean over = false;
+        for (Object[] h : hits) if (((Shape) h[0]).contains(mouse)) over = true;
+        setCursor(Cursor.getPredefinedCursor(over ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+    }
+
+    private void click() {
+        for (Object[] h : new ArrayList<>(hits)) if (((Shape) h[0]).contains(mouse)) { ((Runnable) h[1]).run(); repaint(); return; }
+    }
+
+    private void drag() {
+        if (dragSlider < 0) return;
+        double k = Math.max(0, Math.min(1, (mouse.getX() - sliderX) / SLIDER_W));
+        setSlider(dragSlider, k);
+    }
+
+    private void key(KeyEvent e) {
+        int k = e.getKeyCode();
+        if (k == KeyEvent.VK_F11) { actions.toggleFullscreen(); return; }
+        if (page == Page.PLAY && (k == KeyEvent.VK_BACK_SPACE || (e.getKeyChar() >= ' ' && e.getKeyChar() < 127 && !e.isControlDown()))) {
+            StringBuilder f = editName ? name : address;
+            if (k == KeyEvent.VK_BACK_SPACE) { if (f.length() > 0) f.setLength(f.length() - 1); }
+            else if (f.length() < (editName ? 12 : 60)) f.append(e.getKeyChar());
+            save();
+            return;
+        }
+        switch (page) {
+            case MAIN -> {
+                if (k == KeyEvent.VK_UP || k == KeyEvent.VK_W) sel = (sel + ITEMS.length - 1) % ITEMS.length;
+                if (k == KeyEvent.VK_DOWN || k == KeyEvent.VK_S) sel = (sel + 1) % ITEMS.length;
+                if (k == KeyEvent.VK_ENTER || k == KeyEvent.VK_SPACE) open(sel);
+                if (k == KeyEvent.VK_ESCAPE) sel = ITEMS.length - 1;
+            }
+            case PLAY -> {
+                if (k == KeyEvent.VK_LEFT) tile = 0;
+                if (k == KeyEvent.VK_RIGHT) tile = 1;
+                if (k == KeyEvent.VK_TAB) editName = !editName;
+                if (k == KeyEvent.VK_ENTER) go(tile);
+                if (k == KeyEvent.VK_ESCAPE) back();
+            }
+            default -> { if (k == KeyEvent.VK_ESCAPE || k == KeyEvent.VK_BACK_SPACE) back(); }
+        }
+    }
+
+    private void open(int item) {
+        switch (item) {
+            case 0 -> { page = Page.PLAY; status = ""; statusError = false; }
+            case 1 -> page = Page.HOWTO;
+            case 2 -> page = Page.SETTINGS;
+            case 3 -> page = Page.CREDITS;
+            default -> actions.quit();
+        }
+    }
+
+    private void back() { if (!busy) page = Page.MAIN; }
+
+    private void go(int which) {
+        if (busy) return;
+        if (playerName().isBlank()) { setStatus("Type a name first.", true, false); return; }
+        save();
+        if (which == 0) actions.host();
+        else if (address.toString().isBlank()) setStatus("Type the host's address first.", true, false);
+        else {
+            prefs.put("lastJoined", address.toString().trim());
+            actions.join(address.toString().trim());
+        }
+    }
+
+    private void save() {
+        prefs.put("name", name.toString());
+        prefs.put("address", address.toString());
+        prefs.putInt("hat", hat);
+        prefs.putInt("hatColor", hatColor);
+        prefs.putBoolean("fx", fx);
+        prefs.putBoolean("shake", shake);
+        prefs.putFloat("volume", volume);
+        prefs.putInt("lagDelay", lagDelay);
+        prefs.putInt("lagLoss", lagLoss);
+    }
+
+    // ------------------------------------------------------------------ frame
+
+    @Override protected void paintComponent(Graphics g0) {
+        long now = System.nanoTime();
+        double dt = Math.min(0.05, (now - lastNs) / 1e9);
+        lastNs = now;
+        time += dt;
+        for (double[] e : embers) {
+            e[1] -= e[2] * dt;
+            e[3] += dt * 1.6;
+            if (e[1] < -0.03) spawn(e, false);
+        }
+
+        Graphics2D g = (Graphics2D) g0.create();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        double s = Math.min(getWidth() / (double) VW, getHeight() / (double) VH);
+        double ox = (getWidth() - VW * s) / 2, oy = (getHeight() - VH * s) / 2;
+        g.translate(ox, oy);
+        g.scale(s, s);
+        toCanvas.setTransform(AffineTransform.getTranslateInstance(ox, oy));
+        toCanvas.scale(s, s);
+        hits.clear();
+
+        double vx = -ox / s, vy = -oy / s, vw = getWidth() / s, vh = getHeight() / s;   // the whole window, in canvas units
+        ensureCache(g, vx, vy, vw, vh);
+        drawScene(g, vx, vy, vw, vh, page == Page.MAIN);
+        switch (page) {
+            case MAIN -> drawMain(g);
+            case PLAY -> drawPlay(g);
+            case HOWTO -> drawHowTo(g);
+            case SETTINGS -> drawSettings(g);
+            case CREDITS -> drawCredits(g);
+        }
+        g.dispose();
+    }
+
+    private void spawn(double[] e, boolean anywhere) {
+        e[0] = rnd.nextDouble();
+        e[1] = anywhere ? rnd.nextDouble() : 1.03;
+        e[2] = 0.02 + rnd.nextDouble() * 0.05;
+        e[3] = rnd.nextDouble() * 6.28;
+        e[4] = rnd.nextDouble() < 0.7 ? 1 : 0;
+    }
+
+    // ------------------------------------------------------------------ the throne room scene
+
+    /** Art space: the throne-room drawing uses a 640x540 space placed at the right of the canvas (as in the design). */
+    private static final double AX = 544, AY = 36, AS = 1.6;
+
+    private void ensureCache(Graphics2D g, double vx, double vy, double vw, double vh) {
+        double sc = g.getTransform().getScaleX();
+        int w = (int) Math.ceil(vw * sc), h = (int) Math.ceil(vh * sc);
+        if (back != null && sc == cacheScale && w == cacheW && h == cacheH) return;
+        cacheScale = sc; cacheW = w; cacheH = h;
+
+        // Everything that does not move is baked into one opaque picture per page type: a plain copy each frame.
+        // (Blending full-screen see-through layers every frame cost about 45 ms on a 2560x1600 screen.)
+        Font lf = Type.logo(84);
+        logoShape = new TextLayout("THRONEFALL", lf, new java.awt.font.FontRenderContext(null, true, true))
+            .getOutline(AffineTransform.getTranslateInstance(100, 242));
+        back = new BufferedImage(Math.max(1, w), Math.max(1, h), BufferedImage.TYPE_INT_RGB);
+        Graphics2D b = layer(back, sc, vx, vy);
+        paintRoom(b, vx, vy, vw, vh, true);
+        b.dispose();
+        backPage = new BufferedImage(Math.max(1, w), Math.max(1, h), BufferedImage.TYPE_INT_RGB);
+        b = layer(backPage, sc, vx, vy);
+        paintRoom(b, vx, vy, vw, vh, false);
+        b.dispose();
+
+        Rectangle2D lb = logoShape.getBounds2D();   // the logo, with its shadow, as a small cached picture
+        logoX = lb.getMinX() - 4; logoY = lb.getMinY() - 4;
+        logoImg = new BufferedImage((int) Math.ceil((lb.getWidth() + 8) * sc), (int) Math.ceil((lb.getHeight() + 14) * sc), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D l = layer(logoImg, sc, logoX, logoY);
+        AffineTransform keep = l.getTransform();
+        l.translate(0, 4);
+        l.setColor(GOLD_DK);
+        l.fill(logoShape);
+        l.setTransform(keep);
+        l.setPaint(new LinearGradientPaint(0, (float) lb.getMinY(), 0, (float) lb.getMaxY(), new float[]{0f, .22f, .48f, .72f, 1f},
+            new Color[]{new Color(255, 251, 232), GOLD_HI, GOLD, GOLD_LO, new Color(243, 195, 92)}));
+        l.fill(logoShape);
+        l.dispose();
+
+        fogImg = new BufferedImage((int) Math.ceil(VW * 2 * sc), (int) Math.ceil(260 * sc), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D fo = fogImg.createGraphics();
+        fo.scale(sc, sc);
+        for (int i = 0; i < 9; i++) {   // soft violet fog banks, tiled twice so the strip can scroll without a seam
+            double cx = (i % 4.5) * 360 + 120 + (i >= 5 ? VW : 0), rx = 260 + (i * 37 % 90), ry = 70 + (i * 23 % 30);
+            for (int copy = 0; copy < 2; copy++) {
+                double x = cx + copy * VW - (i >= 5 ? VW : 0);
+                fo.setPaint(new RadialGradientPaint(new Point2D.Double(x, 150), (float) rx, new float[]{0f, 1f},
+                    new Color[]{new Color(150, 130, 220, 60), new Color(150, 130, 220, 0)}));
+                AffineTransform k2 = fo.getTransform();
+                fo.translate(x, 150); fo.scale(1, ry / rx); fo.translate(-x, -150);
+                fo.fill(new Ellipse2D.Double(x - rx, 150 - rx, rx * 2, rx * 2));
+                fo.setTransform(k2);
+            }
+        }
+        fo.dispose();
+    }
+
+    /** The still room: wall, window, and on the title screen the moonlight, pillars, steps, throne and logo glow; then the vignette. */
+    private void paintRoom(Graphics2D b, double vx, double vy, double vw, double vh, boolean throneRoom) {
+        b.setPaint(new LinearGradientPaint(0, (float) vy, 0, (float) (vy + vh), new float[]{0f, .6f, 1f},
+            new Color[]{new Color(18, 12, 34), new Color(11, 7, 22), new Color(6, 4, 12)}));
+        b.fill(new Rectangle2D.Double(vx, vy, vw, vh));
+        b.setPaint(new RadialGradientPaint(new Point2D.Double(1150, 380), 560, new float[]{0f, 1f},
+            new Color[]{new Color(120, 90, 200, 72), new Color(120, 90, 200, 0)}));
+        b.fill(new Rectangle2D.Double(vx, vy, vw, vh));
+        for (double y = Math.floor(vy / 38) * 38; y < vy + vh; y += 38) {   // stone courses, fading out to the left
+            int row = (int) Math.round(y / 38);
+            for (double x = Math.floor(vx / 80) * 80 - (row & 1) * 40; x < vx + vw; x += 80) {
+                double fade = Math.max(0, Math.min(1, (x - 300) / 700));
+                b.setColor(new Color(0, 0, 0, (int) (40 + 70 * fade)));
+                b.fill(new Rectangle2D.Double(x, y, 80, 2));
+                b.fill(new Rectangle2D.Double(x, y, 2, 38));
+            }
+        }
+        AffineTransform base = b.getTransform();
+        b.translate(AX, AY);
+        b.scale(AS, AS);
+        Path2D win = new Path2D.Double();   // gothic window with moonlit glass
+        win.moveTo(300, 40); win.quadTo(300, -10, 345, -10); win.quadTo(390, -10, 390, 40); win.lineTo(390, 170); win.lineTo(300, 170); win.closePath();
+        b.setColor(new Color(27, 20, 54)); b.fill(win);
+        b.setStroke(new BasicStroke(6)); b.setColor(new Color(58, 45, 98)); b.draw(win);
+        Path2D glass = new Path2D.Double();
+        glass.moveTo(312, 46); glass.quadTo(312, 6, 345, 6); glass.quadTo(378, 6, 378, 46); glass.lineTo(378, 162); glass.lineTo(312, 162); glass.closePath();
+        b.setColor(new Color(142, 124, 240, 140)); b.fill(glass);
+        b.setStroke(new BasicStroke(5)); b.setColor(new Color(42, 32, 72));
+        b.draw(new Line2D.Double(345, 6, 345, 162)); b.draw(new Line2D.Double(312, 84, 378, 84));
+        if (throneRoom) {
+            b.setPaint(new GradientPaint(0, 60, new Color(217, 200, 255, 95), 0, 540, new Color(156, 132, 255, 0)));   // moonlight
+            b.fill(poly(312, 60, 378, 60, 520, 540, 170, 540));
+            b.fill(poly(330, 60, 350, 60, 380, 540, 280, 540));
+            paintThrone(b);
+        }
+        b.setTransform(base);
+        b.setPaint(new RadialGradientPaint(new Point2D.Double(960, 405), 1050, new float[]{0f, .4f, 1f},   // vignette
+            new Color[]{new Color(2, 1, 6, 0), new Color(2, 1, 6, 0), new Color(2, 1, 6, 220)}));
+        b.fill(new Rectangle2D.Double(vx, vy, vw, vh));
+        if (throneRoom) {
+            b.setPaint(new LinearGradientPaint((float) vx, 0, 830, 0, new float[]{0f, .6f, 1f},
+                new Color[]{new Color(3, 2, 8, 235), new Color(3, 2, 8, 140), new Color(3, 2, 8, 0)}));
+            b.fill(new Rectangle2D.Double(vx, vy, 830 - vx, vh));
+            Rectangle2D lb = logoShape.getBounds2D();
+            Art.glow(b, new Color(255, 190, 80), lb.getCenterX(), lb.getCenterY(), 300, 0.16f);
+        } else {   // sub-pages: a calmer, darker room so the panels read clearly
+            b.setColor(new Color(4, 3, 10, 120));
+            b.fill(new Rectangle2D.Double(vx, vy, vw, vh));
+        }
+    }
+
+    private static void paintThrone(Graphics2D m) {   // art space
+        for (int x : new int[]{120, 512}) {   // pillars
+            m.setPaint(new GradientPaint(0, 0, new Color(45, 35, 71), 0, 540, new Color(17, 12, 32)));
+            m.fill(new Rectangle2D.Double(x, -40, 58, 580));
+            m.setColor(new Color(58, 45, 92)); m.fill(new Rectangle2D.Double(x - 6, -40, 70, 62));
+        }
+        double[][] steps = {{150, 470, 390, 90, 0x0d0918, 0x3a2d5c}, {190, 430, 310, 44, 0x140e24, 0x4a3a74}, {226, 396, 238, 38, 0x1a1230, 0x5a4890}};
+        for (double[] st : steps) {
+            m.setColor(new Color((int) st[4])); m.fill(new Rectangle2D.Double(st[0], st[1], st[2], st[3]));
+            m.setColor(new Color((int) st[5])); m.fill(new Rectangle2D.Double(st[0], st[1], st[2], 4));
+        }
+        Path2D throne = new Path2D.Double();
+        throne.moveTo(270, 400); throne.lineTo(270, 250); throne.quadTo(270, 196, 300, 176); throne.lineTo(345, 150);
+        throne.lineTo(390, 176); throne.quadTo(420, 196, 420, 250); throne.lineTo(420, 400); throne.closePath();
+        m.setPaint(new GradientPaint(0, 150, new Color(29, 21, 49), 0, 400, new Color(7, 5, 13))); m.fill(throne);
+        m.setStroke(new BasicStroke(3)); m.setColor(new Color(78, 61, 128)); m.draw(throne);
+        Path2D back2 = new Path2D.Double();
+        back2.moveTo(296, 250); back2.quadTo(296, 214, 345, 196); back2.quadTo(394, 214, 394, 250); back2.lineTo(394, 340); back2.lineTo(296, 340); back2.closePath();
+        m.setColor(new Color(58, 15, 34, 230)); m.fill(back2);
+        for (int x : new int[]{250, 406}) {
+            m.setColor(new Color(24, 16, 41)); m.fill(new Rectangle2D.Double(x, 320, 34, 80));
+            m.setColor(new Color(78, 61, 128)); m.draw(new Rectangle2D.Double(x, 320, 34, 80));
+        }
+        m.setColor(new Color(36, 24, 56)); m.fill(new Rectangle2D.Double(282, 338, 126, 24));
+        m.setStroke(new BasicStroke(2)); m.setColor(new Color(106, 85, 168)); m.draw(new Rectangle2D.Double(282, 338, 126, 24));
+        m.setColor(GOLD); m.fill(new Ellipse2D.Double(338, 158, 14, 14));
+    }
+
+    private static Graphics2D layer(BufferedImage im, double sc, double vx, double vy) {
+        Graphics2D g = im.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.scale(sc, sc);
+        g.translate(-vx, -vy);
+        return g;
+    }
+
+    private void drawScene(Graphics2D g, double vx, double vy, double vw, double vh, boolean withThrone) {
+        Scenery.blit1to1(g, withThrone ? back : backPage, vx, vy);
+        if (withThrone) {
+            AffineTransform keep = g.getTransform();
+            g.translate(AX, AY);
+            g.scale(AS, AS);
+            banner(g, 196, new Color(200, 48, 58), new Color(110, 18, 28), 0);
+            banner(g, 430, new Color(47, 111, 214), new Color(15, 43, 102), 1.6);
+            double flick = 0.8 + 0.2 * Math.sin(time * 9) * Math.sin(time * 5.3);
+            if (fx) Art.glow(g, new Color(255, 200, 110), 345, 118, 95, (float) (0.55 * flick));
+            AffineTransform c = g.getTransform();
+            g.translate(0, Math.sin(time * 1.4) * 6);
+            crown(g, 345, 132, 1);
+            g.setTransform(c);
+            for (int x : new int[]{149, 541}) {   // torches on the pillars
+                if (fx) Art.glow(g, new Color(255, 140, 50), x, 240, 70, (float) (0.6 * flick));
+                g.setColor(new Color(58, 45, 92)); g.fill(new Rectangle2D.Double(x - 8, 252, 16, 10));
+                Art.torchFlame(g, x, 254, time + x, 1.0, fx);
+            }
+            g.setTransform(keep);
+        }
+        Scenery.blit1to1(g, fogImg, -(time * 16 % VW), 640);   // fog drifts slowly to the left
+        for (double[] e : embers) {
+            double a = Math.max(0, Math.min(1, e[1] * 2)) * (0.5 + 0.5 * Math.sin(e[3] * 2));   // fades out near the top
+            g.setColor(e[4] > 0 ? new Color(255, 160, 70, (int) (215 * a)) : new Color(200, 180, 255, (int) (200 * a)));
+            double x = vx + (e[0] + Math.sin(e[3]) * 0.006) * vw, y = vy + e[1] * vh;
+            g.fill(new Ellipse2D.Double(x - 1.6, y - 1.6, 3.2, 3.2));
+        }
+    }
+
+    private static Path2D poly(double... xy) {
+        Path2D p = new Path2D.Double();
+        p.moveTo(xy[0], xy[1]);
+        for (int i = 2; i < xy.length; i += 2) p.lineTo(xy[i], xy[i + 1]);
+        p.closePath();
+        return p;
+    }
+
+    /** A hanging team banner that sways a little; x is its left edge in art space. */
+    private void banner(Graphics2D g, double x, Color top, Color bottom, double phase) {
+        AffineTransform keep = g.getTransform();
+        g.translate(x + 33, 40);
+        g.shear(Math.sin(time * 1.9 + phase) * 0.04, 0);
+        g.setPaint(new GradientPaint(0, 0, top, 0, 190, bottom));
+        g.fill(poly(-33, 0, 33, 0, 33, 190, 0, 165, -33, 190));
+        g.setColor(GOLD);
+        g.fill(new Rectangle2D.Double(-33, 0, 66, 12));
+        g.setColor(new Color(255, 205, 90, 215));
+        g.fill(poly(0, 60, 14, 82, -14, 82));
+        g.fill(poly(-12, 100, 12, 100, 0, 110));
+        g.setTransform(keep);
+    }
+
+    /** The gold crown; (cx, base) is the middle of its band. */
+    static void crown(Graphics2D g, double cx, double base, double k) {
+        AffineTransform keep = g.getTransform();
+        g.translate(cx, base);
+        g.scale(k, k);
+        Paint gold = new LinearGradientPaint(0, -46, 0, 10, new float[]{0f, .45f, 1f}, new Color[]{GOLD_HI, GOLD, GOLD_LO});
+        Path2D top = poly(-32, 0, -36, -36, -20, -22, 0, -46, 20, -22, 36, -36, 32, 0);
+        g.setPaint(gold); g.fill(top);
+        g.setStroke(new BasicStroke(2.5f)); g.setColor(GOLD_DK); g.draw(top);
+        RoundRectangle2D band = new RoundRectangle2D.Double(-34, -2, 68, 11, 4, 4);
+        g.setPaint(gold); g.fill(band);
+        g.setColor(GOLD_DK); g.draw(band);
+        g.setColor(new Color(235, 70, 70)); g.fill(new Ellipse2D.Double(-5, -23, 10, 10));
+        g.setColor(new Color(70, 150, 255));
+        g.fill(new Ellipse2D.Double(-23.4, -13.4, 6.8, 6.8));
+        g.fill(new Ellipse2D.Double(16.6, -13.4, 6.8, 6.8));
+        g.setTransform(keep);
+    }
+
+    // ------------------------------------------------------------------ MAIN
+
+    private void drawMain(Graphics2D g) {
+        eyebrow(g, "THE", 100, 158);
+        drawLogo(g);
+        g.setFont(Type.royal(17, false, 0.48f));
+        Art.text(g, "CAPTURE  ·  HOLD  ·  CONQUER", 102, 290, VIOLET);
+
+        double y = 470;
+        for (int i = 0; i < ITEMS.length; i++) {
+            boolean on = i == sel;
+            double h = on ? 84 : 62, x = 100 + (on ? 16 : 0);
+            Rectangle2D box = new Rectangle2D.Double(90, y - 6, 560, h);
+            final int item = i;
+            hits.add(new Object[]{box, (Runnable) () -> open(item), i});
+            if (on) {
+                g.setPaint(new LinearGradientPaint((float) x, 0, (float) (x + 520), 0, new float[]{0f, .55f, 1f},
+                    new Color[]{new Color(255, 205, 90, 50), new Color(255, 205, 90, 14), new Color(255, 205, 90, 0)}));
+                g.fill(poly(x - 10, y - 4, x + 520, y - 4, x + 480, y + h - 10, x - 10, y + h - 10));
+                if (fx) Art.glow(g, GOLD, x - 8, y + 24, 26, 0.9f);
+                g.setPaint(new GradientPaint(0, (float) y, GOLD_HI, 0, (float) (y + h - 14), GOLD_LO));
+                g.fill(new Rectangle2D.Double(x - 10, y + 6, 5, h - 30));
+            }
+            boolean quit = i == ITEMS.length - 1;
+            g.setFont(Type.royal(17, false, 0.1f));
+            Art.text(g, NUMERALS[i], x + 4, y + 36, on ? GOLD : STONE);
+            g.setFont(Type.royal(33, true, 0.14f));
+            Color lc = quit ? (on ? new Color(255, 180, 168) : new Color(225, 140, 140, 190)) : (on ? Color.WHITE : new Color(200, 196, 225, 165));
+            Art.text(g, ITEMS[i], x + 52, y + 40, lc);
+            if (on) {
+                g.setFont(Type.hud(18, false, 0.06f));
+                Art.text(g, HINTS[i], x + 54, y + 66, MUTED);
+            }
+            y += h;
+        }
+
+        drawProfile(g);
+        drawFooter(g, true);
+    }
+
+    private void drawLogo(Graphics2D g) {
+        Rectangle2D b = logoShape.getBounds2D();
+        Scenery.blit1to1(g, logoImg, logoX, logoY);   // gold letters and shadow, drawn once in ensureCache
+        double cycle = time % 5.5 / 5.5;   // a light sweep crosses the letters every few seconds
+        if (cycle > 0.55 && cycle < 0.85) {
+            double sx = b.getMinX() - 120 + (cycle - 0.55) / 0.3 * (b.getWidth() + 240);
+            Shape oldClip = g.getClip();
+            g.clip(logoShape);
+            g.setPaint(new LinearGradientPaint((float) (sx - 60), 0, (float) (sx + 60), 0, new float[]{0f, .5f, 1f},
+                new Color[]{new Color(255, 255, 255, 0), new Color(255, 255, 255, 230), new Color(255, 255, 255, 0)}));
+            g.fill(new Rectangle2D.Double(sx - 60, b.getMinY(), 120, b.getHeight()));
+            g.setClip(oldClip);
+        }
+    }
+
+    private void eyebrow(Graphics2D g, String text, double x, double y) {
+        g.setFont(Type.royal(18, false, 0.6f));
+        double w = g.getFontMetrics().getStringBounds(text, g).getWidth();
+        g.setPaint(new GradientPaint((float) x, 0, new Color(255, 205, 90, 0), (float) (x + 54), 0, GOLD));
+        g.fill(new Rectangle2D.Double(x, y - 6, 54, 1.5));
+        Art.text(g, text, x + 68, y, SOFT);
+        g.setPaint(new GradientPaint((float) (x + 82 + w), 0, GOLD, (float) (x + 136 + w), 0, new Color(255, 205, 90, 0)));
+        g.fill(new Rectangle2D.Double(x + 82 + w, y - 6, 54, 1.5));
+    }
+
+    private void drawProfile(Graphics2D g) {
+        double x = 1170, y = 38, w = 382, h = 74;
+        Path2D card = poly(x + 20, y, x + w, y, x + w, y + h, x, y + h, x, y + 20);
+        g.setPaint(new GradientPaint((float) x, 0, new Color(10, 7, 22, 60), (float) (x + w), 0, new Color(10, 7, 22, 220)));
+        g.fill(card);
+        g.setColor(new Color(255, 205, 90, 80));
+        g.setStroke(new BasicStroke(1.2f));
+        g.draw(card);
+        g.setColor(new Color(11, 7, 24));
+        g.fill(new Rectangle2D.Double(x + 14, y + 10, 54, 54));
+        g.setColor(GOLD);
+        g.draw(new Rectangle2D.Double(x + 14, y + 10, 54, 54));
+        knight(g, x + 41, y + 13, 2.0, 0);
+        g.setFont(Type.royal(22, true, 0.1f));
+        Art.text(g, playerName().toUpperCase(), x + 84, y + 34, Color.WHITE);
+        g.setFont(Type.hud(16, false, 0.08f));
+        Art.text(g, LobbyRoom.HAT_NAMES[hat] + "  ·  last server: " + address, x + 84, y + 58, MUTED);
+    }
+
+    /** The red knight sprite with the chosen hat; (cx, top) is the top centre of the sprite, k = canvas units per sprite pixel. */
+    private void knight(Graphics2D g, double cx, double top, double k, double bobPhase) {
+        double bob = bobPhase == 0 ? 0 : Math.sin(time * 2.1 + bobPhase) * k * 1.2;
+        BufferedImage im = Art.spriteCrisp(0, 0, 1);
+        Object keepHint = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        g.drawImage(im, (int) Math.round(cx - Art.SPR_W * k / 2), (int) Math.round(top + bob), (int) Math.round(Art.SPR_W * k), (int) Math.round(Art.SPR_H * k), null);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, keepHint);
+        AffineTransform keep = g.getTransform();
+        g.translate(cx, top + bob);
+        g.scale(k / GamePanel.PX, k / GamePanel.PX);   // LobbyRoom.hat works in world units (2.4 per sprite pixel)
+        LobbyRoom.hat(g, hat, hatColor, 0, 6);
+        g.setTransform(keep);
+    }
+
+    private void drawFooter(Graphics2D g, boolean main) {
+        double x = 100, y = 862;
+        g.setFont(Type.hud(17, true, 0.08f));
+        if (main) {
+            x = keycap(g, "↑", x, y); x = keycap(g, "↓", x - 6, y); x = label(g, "CHOOSE", x, y);
+            x = keycap(g, "ENTER", x + 18, y); x = label(g, "SELECT", x, y);
+            x = keycap(g, "F11", x + 18, y); label(g, "FULLSCREEN", x, y);
+        } else {
+            g.setFont(Type.ui(17, true));   // the menu fonts have no arrow symbols
+            Art.text(g, "←", x, y - 1, SOFT);
+            g.setFont(Type.hud(17, true, 0.08f));
+            Art.text(g, "BACK", x + 24, y, SOFT);
+            Rectangle2D r = new Rectangle2D.Double(x - 10, y - 26, 200, 38);
+            hits.add(new Object[]{r, (Runnable) this::back});
+            keycap(g, "ESC", x + 92, y);
+        }
+        g.setColor(new Color(110, 230, 130));
+        if (fx) Art.glow(g, new Color(110, 230, 130), 1314, y - 6, 12, 0.7f);
+        g.fill(new Ellipse2D.Double(1308, y - 12, 11, 11));
+        g.setFont(Type.hud(17, true, 0.08f));
+        Art.text(g, "LAN " + lanAddress + "   ·   v1.0", 1330, y, MUTED);
+    }
+
+    private double keycap(Graphics2D g, String k, double x, double y) {
+        boolean symbol = k.chars().anyMatch(c -> c > 127);   // arrows: the menu fonts have none, the system UI font does
+        g.setFont(symbol ? Type.ui(15, true) : Type.hud(15, true, 0.04f));
+        double w = Math.max(30, g.getFontMetrics().stringWidth(k) + 16);
+        RoundRectangle2D r = new RoundRectangle2D.Double(x, y - 21, w, 28, 5, 5);
+        g.setColor(new Color(20, 14, 40, 170)); g.fill(r);
+        g.setStroke(new BasicStroke(1.3f)); g.setColor(new Color(170, 150, 235, 150)); g.draw(r);
+        Art.textCenter(g, k, x, w, y - 2, SOFT);
+        return x + w + 8;
+    }
+
+    private double label(Graphics2D g, String s, double x, double y) {
+        g.setFont(Type.hud(17, true, 0.08f));
+        Art.text(g, s, x, y - 2, MUTED);
+        return x + g.getFontMetrics().stringWidth(s) + 8;
+    }
+
+    // ------------------------------------------------------------------ shared page pieces
+
+    private void pageTitle(Graphics2D g, String crumb, String title) {
+        g.setFont(Type.hud(18, true, 0.3f));
+        Art.text(g, "MAIN MENU   /   ", 100, 66, MUTED);
+        Art.text(g, crumb, 100 + g.getFontMetrics().stringWidth("MAIN MENU   /   "), 66, GOLD);
+        Shape t = new TextLayout(title, Type.logo(58), new java.awt.font.FontRenderContext(null, true, true))
+            .getOutline(AffineTransform.getTranslateInstance(100, 138));
+        AffineTransform keep = g.getTransform();
+        g.translate(0, 3);
+        g.setColor(GOLD_DK);
+        g.fill(t);
+        g.setTransform(keep);
+        Rectangle2D b = t.getBounds2D();
+        g.setPaint(new LinearGradientPaint(0, (float) b.getMinY(), 0, (float) b.getMaxY(), new float[]{0f, .5f, 1f}, new Color[]{GOLD_HI, GOLD, GOLD_LO}));
+        g.fill(t);
+    }
+
+    /** A dark panel with cut corners and a thin border (the design's cards). */
+    private static Path2D panel(Graphics2D g, double x, double y, double w, double h, double cut, Color border, Paint fill) {
+        Path2D p = poly(x, y, x + w - cut, y, x + w, y + cut, x + w, y + h, x + cut, y + h, x, y + h - cut);
+        g.setPaint(fill != null ? fill : new GradientPaint(0, (float) y, new Color(20, 14, 40, 200), 0, (float) (y + h), new Color(8, 5, 18, 235)));
+        g.fill(p);
+        g.setStroke(new BasicStroke(1.4f));
+        g.setColor(border);
+        g.draw(p);
+        return p;
+    }
+
+    private static void wrap(Graphics2D g, String text, double x, double y, double w, double lineH, Color c) {
+        FontMetrics fm = g.getFontMetrics();
+        StringBuilder line = new StringBuilder();
+        for (String word : text.split(" ")) {
+            if (line.length() > 0 && fm.stringWidth(line + " " + word) > w) {
+                Art.text(g, line.toString(), x, y, c);
+                y += lineH;
+                line.setLength(0);
+            }
+            if (line.length() > 0) line.append(' ');
+            line.append(word);
+        }
+        if (line.length() > 0) Art.text(g, line.toString(), x, y, c);
+    }
+
+    /** A gold (or blue) slanted action button. */
+    private void button(Graphics2D g, double x, double y, double w, String text, boolean blue, Runnable action) {
+        Path2D p = poly(x + 12, y, x + w, y, x + w - 12, y + 46, x, y + 46);
+        g.setPaint(blue ? new GradientPaint(0, (float) y, new Color(201, 240, 255), 0, (float) (y + 46), new Color(31, 111, 176))
+            : new LinearGradientPaint(0, (float) y, 0, (float) (y + 46), new float[]{0f, .5f, 1f}, new Color[]{GOLD_HI, GOLD, GOLD_LO}));
+        g.fill(p);
+        g.setFont(Type.royal(19, true, 0.25f));
+        Art.textCenter(g, text, x, w, y + 31, blue ? new Color(3, 18, 38) : new Color(26, 15, 2));
+        hits.add(new Object[]{p, action});
+    }
+
+    // ------------------------------------------------------------------ PLAY
+
+    private void drawPlay(Graphics2D g) {
+        pageTitle(g, "PLAY", "Choose your path");
+        double ty = 196, th = 572, tw = 448;
+        playTile(g, 0, 100, ty, tw, th);
+        playTile(g, 1, 580, ty, tw, th);
+
+        double cx = 1120, cw = 400, cy = 150, ch = 618;   // your knight
+        panel(g, cx, cy, cw, ch, 30, new Color(255, 205, 90, 80), null);
+        g.setFont(Type.hud(16, true, 0.3f));
+        Art.textCenter(g, "YOUR KNIGHT", cx, cw, cy + 44, VIOLET);
+        if (fx) Art.glow(g, GOLD, cx + cw / 2, cy + 390, 120, 0.35f);
+        g.setPaint(new RadialGradientPaint(new Point2D.Double(cx + cw / 2, cy + 404), 110, new float[]{0f, 1f},
+            new Color[]{new Color(255, 205, 90, 100), new Color(255, 205, 90, 0)}));
+        g.fill(new Ellipse2D.Double(cx + cw / 2 - 110, cy + 392, 220, 26));
+        knight(g, cx + cw / 2, cy + 120, 11, 1);
+        picker(g, cx + 24, cy + 450, cw - 48, LobbyRoom.HAT_NAMES[hat].toUpperCase(), () -> hat = (hat + LobbyMap.HATS - 1) % LobbyMap.HATS,
+            () -> hat = (hat + 1) % LobbyMap.HATS);
+        picker(g, cx + 24, cy + 506, cw - 48, COLOR_NAMES[hatColor], () -> hatColor = (hatColor + COLOR_NAMES.length - 1) % COLOR_NAMES.length,
+            () -> hatColor = (hatColor + 1) % COLOR_NAMES.length);
+        double ny = cy + 560;
+        g.setColor(new Color(255, 205, 90, 70));
+        g.fill(new Rectangle2D.Double(cx + 24, ny, cw - 48, 1));
+        field(g, cx + 40, ny + 12, cw - 80, name.toString(), editName, true,
+            () -> editName = true);
+
+        if (!status.isEmpty()) {
+            g.setFont(Type.hud(19, true, 0.04f));
+            Art.text(g, status, 100, 806, statusError ? new Color(255, 130, 110) : GOLD_HI);
+        }
+        drawFooter(g, false);
+    }
+
+    private void playTile(Graphics2D g, int which, double x, double y, double w, double h) {
+        boolean on = tile == which, host = which == 0;
+        double lift = on ? -8 : 0;
+        y += lift;
+        Paint fill = new GradientPaint(0, (float) y, host ? new Color(42, 11, 22) : new Color(8, 24, 58), 0, (float) (y + h * 0.75),
+            host ? new Color(13, 6, 16) : new Color(7, 8, 20));
+        Path2D p = panel(g, x, y, w, h, 30, on ? GOLD : new Color(255, 255, 255, 30), fill);
+        hits.add(new Object[]{p, (Runnable) () -> tile = which, which});
+        Shape oldClip = g.getClip();
+        g.clip(p);
+        g.setPaint(new RadialGradientPaint(new Point2D.Double(x + w / 2, y + 90), 300, new float[]{0f, 1f},
+            new Color[]{host ? new Color(255, 90, 50, 80) : new Color(60, 170, 255, 80), new Color(0, 0, 0, 0)}));
+        g.fill(new Rectangle2D.Double(x, y, w, h));
+        AffineTransform keep = g.getTransform();
+        g.translate(x, y);
+        g.scale(w / 300, 232 / 200.0);
+        if (host) beaconArt(g); else gateArt(g);
+        g.setTransform(keep);
+        g.setClip(oldClip);
+
+        double tx = x + 32, cy = y + 290;
+        g.setFont(Type.royal(36, true, 0.12f));
+        Art.text(g, host ? "HOST A GAME" : "JOIN A GAME", tx, cy, host ? new Color(255, 184, 168) : new Color(168, 214, 255));
+        g.setFont(Type.hud(19, false, 0.03f));
+        wrap(g, host ? "Light the beacon. Run the game on this computer and pick 1v1 to 4v4 in the lobby."
+            : "March to a friend's castle. Type the address shown on their Play screen.", tx, cy + 34, w - 64, 25, SOFT);
+        if (host) {
+            g.setFont(Type.hud(20, true, 0.08f));
+            String a = "YOUR ADDRESS   " + lanAddress;
+            double aw = g.getFontMetrics().stringWidth(a) + 28;
+            g.setColor(new Color(0, 0, 0, 115)); g.fill(new Rectangle2D.Double(tx, cy + 112, aw, 38));
+            g.setColor(new Color(255, 205, 90, 120)); g.draw(new Rectangle2D.Double(tx, cy + 112, aw, 38));
+            Art.text(g, a, tx + 14, cy + 138, GOLD_HI);
+            button(g, tx, y + h - 80, 170, busy && tile == 0 ? "..." : "HOST", false, () -> go(0));
+        } else {
+            field(g, tx, cy + 96, w - 64, address.toString(), !editName, false, () -> editName = false);
+            g.setFont(Type.hud(16, false, 0.04f));
+            double rx = tx;
+            String last = prefs.get("lastJoined", "");
+            for (String r : last.isEmpty() || last.equals("localhost") ? new String[]{"localhost"} : new String[]{"localhost", last}) {
+                double rw = g.getFontMetrics().stringWidth(r) + 20;
+                Rectangle2D rr = new Rectangle2D.Double(rx, cy + 150, rw, 28);
+                g.setColor(new Color(170, 150, 235, 90)); g.draw(rr);
+                Art.text(g, r, rx + 10, cy + 170, SOFT);
+                final String pick = r;
+                hits.add(new Object[]{rr, (Runnable) () -> { address.setLength(0); address.append(pick); editName = false; }});
+                rx += rw + 8;
+            }
+            button(g, tx, y + h - 80, 170, busy && tile == 1 ? "..." : "JOIN", true, () -> go(1));
+        }
+    }
+
+    /** A text box; the caret blinks while it has the keyboard. */
+    private void field(Graphics2D g, double x, double y, double w, String text, boolean focused, boolean centred, Runnable onClick) {
+        Rectangle2D r = new Rectangle2D.Double(x, y, w, 42);
+        g.setColor(new Color(0, 0, 0, 130)); g.fill(r);
+        g.setStroke(new BasicStroke(focused ? 1.8f : 1.2f));
+        g.setColor(focused ? (centred ? GOLD : BLUE_FX) : new Color(170, 150, 235, 110)); g.draw(r);
+        g.setFont(centred ? Type.royal(24, true, 0.12f) : Type.hud(22, true, 0.06f));
+        FontMetrics fm = g.getFontMetrics();
+        String shown = centred ? text.toUpperCase() : text;
+        double tx = centred ? x + (w - fm.stringWidth(shown)) / 2 : x + 14;
+        Art.text(g, shown, tx, y + 29, Color.WHITE);
+        if (focused && ((int) (time * 2) & 1) == 0) {
+            g.setColor(centred ? GOLD : BLUE_FX);
+            g.fill(new Rectangle2D.Double(tx + fm.stringWidth(shown) + 3, y + 10, 2, 22));
+        }
+        hits.add(new Object[]{r, onClick});
+    }
+
+    private void picker(Graphics2D g, double x, double y, double w, String value, Runnable prev, Runnable next) {
+        for (int side = 0; side < 2; side++) {
+            Rectangle2D a = new Rectangle2D.Double(side == 0 ? x : x + w - 40, y, 40, 40);
+            g.setColor(new Color(255, 205, 90, 130)); g.setStroke(new BasicStroke(1.2f)); g.draw(a);
+            g.setFont(Type.royal(22, true, 0f));
+            Art.textCenter(g, side == 0 ? "‹" : "›", a.getX(), 40, y + 28, GOLD);
+            final Runnable r = side == 0 ? prev : next;
+            hits.add(new Object[]{a, (Runnable) () -> { r.run(); save(); }});
+        }
+        g.setFont(Type.royal(21, true, 0.14f));
+        Art.textCenter(g, value, x, w, y + 28, Color.WHITE);
+    }
+
+
+    private void beaconArt(Graphics2D g) {   // 300x200 art space
+        g.setColor(new Color(20, 6, 12)); g.fill(poly(0, 200, 0, 150, 80, 128, 150, 135, 230, 150, 300, 125, 300, 200));
+        g.setColor(new Color(28, 13, 26)); g.fill(new Rectangle2D.Double(120, 70, 60, 90));
+        g.setColor(new Color(74, 31, 42)); g.setStroke(new BasicStroke(3)); g.draw(new Rectangle2D.Double(120, 70, 60, 90));
+        g.setColor(new Color(37, 16, 31));
+        for (int i = 0; i < 4; i++) g.fill(new Rectangle2D.Double(114 + i * 20, 58, 12, 14));
+        g.setColor(new Color(10, 4, 8)); g.fill(new Rectangle2D.Double(140, 120, 20, 40));
+        if (fx) Art.glow(g, new Color(255, 120, 50), 150, 42, 46, (float) (0.6 + 0.15 * Math.sin(time * 7)));
+        g.setColor(new Color(74, 31, 42)); g.fill(new Rectangle2D.Double(140, 56, 20, 6));
+        Art.torchFlame(g, 150, 58, time, 1.1, fx);
+    }
+
+    private void gateArt(Graphics2D g) {
+        g.setColor(new Color(6, 10, 24)); g.fill(poly(0, 200, 0, 140, 90, 150, 150, 130, 220, 110, 300, 140, 300, 200));
+        g.setColor(new Color(60, 200, 255, 170));
+        g.setStroke(new BasicStroke(3, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{6, 6}, (float) (12 - time * 20 % 12)));
+        g.draw(new QuadCurve2D.Double(150, 200, 140, 160, 150, 130));
+        Path2D arch = new Path2D.Double();
+        arch.moveTo(105, 130); arch.lineTo(105, 80); arch.quadTo(105, 50, 150, 50); arch.quadTo(195, 50, 195, 80); arch.lineTo(195, 130); arch.closePath();
+        g.setColor(new Color(12, 20, 48)); g.fill(arch);
+        g.setStroke(new BasicStroke(3)); g.setColor(new Color(31, 58, 122)); g.draw(arch);
+        Path2D door = new Path2D.Double();
+        door.moveTo(120, 130); door.lineTo(120, 88); door.quadTo(120, 66, 150, 66); door.quadTo(180, 66, 180, 88); door.lineTo(180, 130); door.closePath();
+        g.setColor(new Color(60, 200, 255, (int) (60 + 25 * Math.sin(time * 2.5)))); g.fill(door);
+        g.setStroke(new BasicStroke(2)); g.setColor(BLUE_FX); g.draw(door);
+        g.setStroke(new BasicStroke(3)); g.setColor(new Color(31, 58, 122));
+        g.draw(new Line2D.Double(150, 66, 150, 130)); g.draw(new Line2D.Double(120, 100, 180, 100));
+    }
+
+    // ------------------------------------------------------------------ HOW TO PLAY
+
+    private void drawHowTo(Graphics2D g) {
+        pageTitle(g, "HOW TO PLAY", "How to play");
+        String[] titles = {"STEAL", "RETURN", "DEFEND"};
+        String[] text = {"Run into the enemy base and touch their flag to pick it up.",
+            "Carry it to your own base while your flag is safe at home. First to 3 captures wins.",
+            "Shoot the carrier to drop the flag. Touch your own dropped flag to send it home."};
+        Color[] col = {new Color(255, 184, 168), GOLD, new Color(168, 214, 255)};
+        Color[] edge = {new Color(235, 70, 70), new Color(170, 150, 235, 150), new Color(70, 150, 255)};
+        for (int i = 0; i < 3; i++) {
+            double x = 100 + i * 476, y = 200, w = 448, h = 400;
+            panel(g, x, y, w, h, 30, edge[i], null);
+            AffineTransform keep = g.getTransform();
+            g.translate(x + w / 2, y + 120);
+            howIcon(g, i);
+            g.setTransform(keep);
+            g.setFont(Type.royal(34, true, 0.14f));
+            Art.text(g, titles[i], x + 36, y + 262, col[i]);
+            g.setFont(Type.hud(21, false, 0.03f));
+            wrap(g, text[i], x + 36, y + 300, w - 72, 28, SOFT);
+        }
+        panel(g, 100, 636, 1400, 70, 18, new Color(170, 150, 235, 120), null);
+        double x = 130;
+        String[][] keys = {{"WASD", "move"}, {"MOUSE", "aim and fire"}, {"TAB", "scores"}, {"ENTER", "chat"}, {"R", "ready (lobby)"},
+            {"E / C", "wardrobe"}, {"F11", "fullscreen"}};
+        for (String[] k : keys) {
+            x = keycap(g, k[0], x, 680);
+            g.setFont(Type.hud(19, true, 0.04f));
+            Art.text(g, k[1], x, 678, SOFT);
+            x += g.getFontMetrics().stringWidth(k[1]) + 24;
+        }
+        g.setFont(Type.hud(19, true, 0.04f));
+        Art.text(g, "The purple tent gives a 5 second shield.", 100, 750, new Color(201, 165, 255));
+        drawFooter(g, false);
+    }
+
+    private void howIcon(Graphics2D g, int i) {
+        g.setStroke(new BasicStroke(3));
+        if (i == 0) {   // enemy flag on its base
+            g.setColor(BLUE_FX);
+            g.setStroke(new BasicStroke(3, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{9, 6}, (float) (time * 15 % 15)));
+            g.draw(new Ellipse2D.Double(-70, 26, 140, 34));
+            g.setStroke(new BasicStroke(1));
+            g.scale(2, 2);
+            Art.flag(g, 0, -6, 1, time);
+        } else if (i == 1) {   // carry it home
+            g.setColor(new Color(235, 70, 70, 70)); g.fill(new Ellipse2D.Double(-80, 24, 160, 40));
+            g.setColor(RED_FX); g.draw(new Ellipse2D.Double(-80, 24, 160, 40));
+            g.setColor(GOLD);
+            g.setStroke(new BasicStroke(5, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{12, 9}, (float) (21 - time * 30 % 21)));
+            g.draw(new Line2D.Double(-90, -10, 40, -10));
+            g.fill(poly(40, -28, 70, -10, 40, 8));
+            crown(g, -20, -52, 0.8);
+        } else {   // shoot the carrier
+            g.setColor(BLUE_FX);
+            g.draw(new Ellipse2D.Double(-56, -56, 112, 112));
+            g.draw(new Ellipse2D.Double(-22, -22, 44, 44));
+            g.setStroke(new BasicStroke(4));
+            g.draw(new Line2D.Double(0, -78, 0, -36)); g.draw(new Line2D.Double(0, 36, 0, 78));
+            g.draw(new Line2D.Double(-78, 0, -36, 0)); g.draw(new Line2D.Double(36, 0, 78, 0));
+            g.setColor(RED_FX); g.fill(new Ellipse2D.Double(-6, -6, 12, 12));
+        }
+    }
+
+    // ------------------------------------------------------------------ SETTINGS
+
+    private static final double SLIDER_W = 260;
+    private double sliderX;
+
+    private void drawSettings(Graphics2D g) {
+        pageTitle(g, "SETTINGS", "Settings");
+        panel(g, 100, 200, 680, 470, 30, new Color(170, 150, 235, 150), null);
+        g.setFont(Type.royal(30, true, 0.14f));
+        Art.text(g, "DISPLAY", 140, 262, GOLD);
+        toggle(g, 140, 300, "Fullscreen", actions.fullscreen(), actions::toggleFullscreen);
+        toggle(g, 140, 370, "Visual effects", fx, () -> fx = !fx);
+        toggle(g, 140, 440, "Screen shake", shake, () -> shake = !shake);
+        g.setFont(Type.hud(18, false, 0.03f));
+        wrap(g, "Effects are the glows, sparks and fireworks. The game turns them off by itself if your computer is too slow.",
+            140, 560, 600, 26, MUTED);
+
+        panel(g, 820, 200, 680, 470, 30, new Color(170, 150, 235, 150), null);
+        g.setFont(Type.royal(30, true, 0.14f));
+        Art.text(g, "SOUND AND NETWORK", 860, 262, GOLD);
+        sliderX = 1200;
+        slider(g, 0, 860, 300, "Sound volume", volume, Math.round(volume * 100) + "%");
+        slider(g, 1, 860, 370, "Test delay", lagDelay / 300.0, lagDelay + " ms");
+        slider(g, 2, 860, 440, "Test packet loss", lagLoss / 30.0, lagLoss + "%");
+        g.setFont(Type.hud(18, false, 0.03f));
+        wrap(g, "The two test sliders fake a bad network for demos: extra delay each way and lost packets. Both apply to the next game you join.",
+            860, 560, 600, 26, MUTED);
+        drawFooter(g, false);
+    }
+
+    private void toggle(Graphics2D g, double x, double y, String label, boolean on, Runnable flip) {
+        g.setFont(Type.hud(23, true, 0.04f));
+        Art.text(g, label, x, y + 30, SOFT);
+        RoundRectangle2D t = new RoundRectangle2D.Double(x + 520, y + 8, 64, 30, 30, 30);
+        g.setColor(on ? new Color(110, 230, 130, 70) : new Color(42, 35, 64)); g.fill(t);
+        g.setStroke(new BasicStroke(1.5f));
+        g.setColor(on ? new Color(110, 230, 130) : STONE); g.draw(t);
+        g.setColor(on ? new Color(110, 230, 130) : MUTED);
+        g.fill(new Ellipse2D.Double(on ? x + 558 : x + 524, y + 12, 22, 22));
+        g.setColor(new Color(110, 95, 160, 90));
+        g.fill(new Rectangle2D.Double(x, y + 50, 600, 1));
+        hits.add(new Object[]{new Rectangle2D.Double(x, y, 600, 50), (Runnable) () -> { flip.run(); save(); }});
+    }
+
+    private void slider(Graphics2D g, int id, double x, double y, String label, double k, String value) {
+        g.setFont(Type.hud(23, true, 0.04f));
+        Art.text(g, label, x, y + 30, SOFT);
+        g.setFont(Type.hud(19, true, 0.04f));
+        Art.text(g, value, sliderX - 90, y + 30, GOLD_HI);
+        g.setColor(new Color(42, 35, 64));
+        g.fill(new RoundRectangle2D.Double(sliderX, y + 20, SLIDER_W, 6, 6, 6));
+        g.setColor(GOLD);
+        g.fill(new RoundRectangle2D.Double(sliderX, y + 20, SLIDER_W * k, 6, 6, 6));
+        g.setColor(GOLD_HI);
+        g.fill(new Ellipse2D.Double(sliderX + SLIDER_W * k - 10, y + 13, 20, 20));
+        g.setColor(new Color(110, 95, 160, 90));
+        g.fill(new Rectangle2D.Double(x, y + 50, 600, 1));
+        hits.add(new Object[]{new Rectangle2D.Double(sliderX - 14, y, SLIDER_W + 28, 50), (Runnable) () -> {
+            dragSlider = id;
+            setSlider(id, Math.max(0, Math.min(1, (mouse.getX() - sliderX) / SLIDER_W)));
+        }});
+    }
+
+    private void setSlider(int id, double k) {
+        switch (id) {
+            case 0 -> { volume = (float) (Math.round(k * 20) / 20.0); Sfx.volume = volume; }
+            case 1 -> lagDelay = (int) Math.round(k * 30) * 10;
+            default -> lagLoss = (int) Math.round(k * 30);
+        }
+    }
+
+    // ------------------------------------------------------------------ CREDITS (empty for now, as asked)
+
+    private void drawCredits(Graphics2D g) {
+        crown(g, VW / 2.0, 130, 0.9);
+        g.setFont(Type.royal(46, true, 0.22f));
+        Art.textCenter(g, "CREDITS", 0, VW, 200, GOLD);
+        g.setPaint(new LinearGradientPaint(400, 0, 1200, 0, new float[]{0f, .5f, 1f},
+            new Color[]{new Color(255, 205, 90, 0), new Color(255, 205, 90, 150), new Color(255, 205, 90, 0)}));
+        g.fill(new Rectangle2D.Double(400, 236, 800, 1.5));
+        g.fill(new Rectangle2D.Double(400, 780, 800, 1.5));
+        drawFooter(g, false);
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    /**
+     * This computer's address on the local network, to show on the Host tile.
+     * shortcut: takes the first private IPv4 of an active, non-virtual adapter; a PC on several networks may show the wrong one.
+     */
+    static String findLanAddress() {
+        try {
+            for (java.net.NetworkInterface ni : java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())) {
+                String n = (ni.getDisplayName() + " " + ni.getName()).toLowerCase();
+                if (!ni.isUp() || ni.isLoopback() || ni.isVirtual() || n.contains("virtual") || n.contains("vmware") || n.contains("hyper-v")
+                        || n.contains("vethernet") || n.contains("bluetooth")) continue;
+                for (java.net.InetAddress a : java.util.Collections.list(ni.getInetAddresses()))
+                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress()) return a.getHostAddress();
+            }
+        } catch (Exception ignored) {
+            // no network information: fall through
+        }
+        return "localhost";
+    }
+}

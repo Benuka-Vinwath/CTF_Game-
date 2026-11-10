@@ -72,7 +72,10 @@ public class NetClient implements NetLink {
     // ------------------------------------------------------------------ TCP
 
     /** Blocks briefly. Call from a background thread. team: 0 red, 1 blue, -1 automatic. */
-    public void connect(String host, int port, String name, int team) throws IOException {
+    public void connect(String host, int port, String name, int team) throws IOException { connect(host, port, name, team, 0, 0); }
+
+    /** hat / color: the look picked in the main menu, sent with HELLO. */
+    public void connect(String host, int port, String name, int team, int hat, int color) throws IOException {
         tcp = new Socket();
         tcp.connect(new InetSocketAddress(host, port), 3000);
         tcp.setTcpNoDelay(true);
@@ -85,7 +88,7 @@ public class NetClient implements NetLink {
         reader.setDaemon(true);
         reader.start();
 
-        sendTcp("HELLO " + team + " " + Protocol.cleanName(name));
+        sendTcp("HELLO " + team + " " + Protocol.cleanName(name) + " " + hat + " " + color);
         scheduler.scheduleAtFixedRate(() -> sendTcp("PING " + System.nanoTime()),
                 2, 2, TimeUnit.SECONDS);
     }
@@ -162,6 +165,9 @@ public class NetClient implements NetLink {
 
     @Override
     public void sendLook(int hat, int color) { sendTcp("LOOK " + hat + " " + color); }
+
+    @Override
+    public void sendMode(int perTeam) { sendTcp("MODE " + perTeam); }
 
     @Override
     public Protocol.Lobby lobby() { return lobby; }

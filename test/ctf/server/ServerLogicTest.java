@@ -122,16 +122,44 @@ public class ServerLogicTest {
     }
 
     void hostPassesOnWhenTheyLeave() {
-        newLobby(0, 1, 1);
+        newLobby(0, 1, 0, 1);
         g.removePlayer(p(0).id);
         g.begin(p(1).id);
         check(g.countdown() == 0, "nobody can start with fewer than the minimum players");
         Player late = g.addPlayer("New", 0, new FakeConn());
-        for (Player p : List.of(p(1), p(2), late)) g.setReady(p.id, true);
+        for (Player p : List.of(p(1), p(2), p(3), late)) g.setReady(p.id, true);
         g.begin(late.id);
         check(g.countdown() == 0, "the newest player is not the host");
         g.begin(p(1).id);
         check(g.countdown() > 0, "the next player becomes host and can start");
+    }
+
+    void matchSizeIsChosenByHostAndNeedsFullTeams() {
+        newLobby(0, 1);
+        check(g.mode() == 1, "two players make a 1v1");
+        g.setMode(p(1).id, 2);
+        check(g.mode() == 1, "only the host can change the match size");
+        g.setMode(p(0).id, 2);
+        check(g.mode() == 2, "the host picks 2v2");
+        for (Player p : ps) g.setReady(p.id, true);
+        g.begin(p(0).id);
+        check(g.countdown() == 0, "2v2 cannot start with one player per team");
+        Player c = g.addPlayer("C", 0, new FakeConn()), d = g.addPlayer("D", 1, new FakeConn());
+        g.setReady(c.id, true);
+        g.setReady(d.id, true);
+        g.begin(p(0).id);
+        check(g.countdown() > 0, "2v2 starts once both teams have two ready players");
+        g.setMode(p(0).id, 1);
+        check(g.mode() == 2, "the size cannot drop below a team's current size");
+        g.addPlayer("E", -1, new FakeConn());
+        check(g.mode() == 3 && g.countdown() == 0, "a fifth player grows the match to 3v3 and stops the countdown");
+        place(c, LobbyMap.PADS[1][0], LobbyMap.PADS[1][1]);
+        g.tick();
+        check(c.team == 1, "pads allow moving while the other team has room");
+        FakeConn fc = new FakeConn();
+        g.addPlayer("F", 0, 4, 99, fc);
+        check(fc.lines.stream().anyMatch(l -> l.startsWith("LOBBY") && l.contains(":4:" + (99 % LobbyMap.HAT_COLORS) + ":0:F")),
+                "a hat picked in the menu arrives with HELLO and is wrapped into range");
     }
 
     void lobbyIsSafeAndHasItsOwnWalls() {
@@ -257,7 +285,7 @@ public class ServerLogicTest {
     }
 
     void friendlyFireAndShield() {
-        newGame(0, 1, 0);
+        newGame(0, 1, 0, 1);   // 2v2: teams must be full to start; the fourth player waits at the blue base
         Player a = p(0), b = p(1), c = p(2);
         place(a, 100, 200);
         place(c, 200, 200);
@@ -464,11 +492,11 @@ public class ServerLogicTest {
         check(Protocol.decodeInput("I 3 77 9 1 0 NaN 1") == null, "NaN aim is rejected");
         check(Protocol.decodeInput("I 3 77 9") == null, "short input is rejected");
 
-        Protocol.Lobby lob = Protocol.decodeLobby(Protocol.encodeLobby("LOBBY", 2, 1,
+        Protocol.Lobby lob = Protocol.decodeLobby(Protocol.encodeLobby("LOBBY", 2, 1, 3,
                 List.of(new Protocol.LobbyEntry(1, 0, true, 3, 4, 7, "Ann"), new Protocol.LobbyEntry(2, 1, false, 0, 0, 0, "Bob"))));
         check(lob != null && lob.entries().size() == 2 && lob.entries().get(0).ready() && lob.entries().get(1).name().equals("Bob"),
                 "lobby list round trip");
-        check(lob.hostId() == 1 && lob.entries().get(0).hat() == 3 && lob.entries().get(0).hatColor() == 4
+        check(lob.hostId() == 1 && lob.mode() == 3 && lob.entries().get(0).hat() == 3 && lob.entries().get(0).hatColor() == 4
                 && lob.entries().get(0).targetHits() == 7, "host, hat and target hits survive the round trip");
 
         newLobby(0);
@@ -497,6 +525,7 @@ public class ServerLogicTest {
         t.run("host start", t::hostStartsWhenAllReady);
         t.run("countdown cancel", t::countdownCancelsWhenSomeoneUnreadies);
         t.run("host leaves", t::hostPassesOnWhenTheyLeave);
+        t.run("match size", t::matchSizeIsChosenByHostAndNeedsFullTeams);
         t.run("lobby safe, own walls", t::lobbyIsSafeAndHasItsOwnWalls);
         t.run("practice targets", t::practiceTargetsCountHits);
         t.run("team pads", t::teamPadsSwitchTeamUpToTheCap);

@@ -3,7 +3,7 @@ C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\Demo.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\GamePanel.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\GameView.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\HD.java
-C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\LobbyWindow.java
+C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\GameWindow.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\Main.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\NetLink.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\Scenery.java
@@ -25,3 +25,4 @@ C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\server\UdpServer.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\tools\ConsoleClient.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\LobbyRoom.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\common\LobbyMap.java
+C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\MenuScreen.java
