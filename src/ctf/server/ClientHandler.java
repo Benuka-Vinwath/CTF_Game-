@@ -19,7 +19,8 @@ import java.util.concurrent.LinkedBlockingQueue;
  * takes lines from an outbox queue and writes them to the socket, so game logic never waits on a
  * slow client's network. A client that stops reading entirely (queue over MAX_QUEUE) is dropped.
  *
- * Commands (client to server): HELLO team name, READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text, AGAIN, BYE
+ * Commands (client to server): HELLO team name, READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text,
+ * BEGIN (host starts the countdown), LOOK hat colour, AGAIN (back to the lobby after a match), BYE
  */
 public class ClientHandler implements Runnable, Conn {
     private static final String CLOSE = "\u0000CLOSE";
@@ -87,6 +88,11 @@ public class ClientHandler implements Runnable, Conn {
             case "PING"    -> send("PONG " + arg);                       // client measures the round trip
             case "RTT"     -> game.setPing(player.id, parseInt(arg, 0)); // client reports it for the scoreboard
             case "CHAT"    -> game.chat(player.id, arg);
+            case "BEGIN"   -> game.begin(player.id);                     // host only; the server checks
+            case "LOOK"    -> {
+                String[] a = arg.split(" ");
+                game.setLook(player.id, parseInt(a[0], 0), a.length > 1 ? parseInt(a[1], 0) : 0);
+            }
             case "AGAIN"   -> game.wantAgain(player.id);
             case "BYE"     -> { return false; }
             default        -> send("ERROR unknown command " + cmd);

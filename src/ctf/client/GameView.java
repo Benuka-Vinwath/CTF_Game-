@@ -30,6 +30,7 @@ import java.awt.image.BufferedImage;
 public class GameView extends JComponent {
     private final GamePanel game;
     private static final double MAX_RENDER_SCALE = 2.0;   // draw at most 2 pixels per world pixel, then enlarge (keeps 4K fast)
+    private static final double MAX_WORLD_PIXELS = 1920 * 1080;   // and at most a 1080p picture of the world
     private static final double MARGIN = 16;               // world units of scenery kept visible around the arena
     private BufferedImage frame;                           // the game drawn at the window's real pixel size
     private double renderCap = MAX_RENDER_SCALE;           // lowered automatically on slow computers
@@ -55,7 +56,7 @@ public class GameView extends JComponent {
         addKeyListener(new KeyAdapter() {
             @Override public void keyPressed(KeyEvent e) {
                 if (e.getKeyCode() == KeyEvent.VK_F11) { toggleFullscreen.run(); return; }
-                if (e.getKeyCode() == KeyEvent.VK_ESCAPE) { leaveFullscreen.run(); return; }
+                if (e.getKeyCode() == KeyEvent.VK_ESCAPE) leaveFullscreen.run();   // and the game still gets it: Esc cancels chat
                 for (KeyListener l : game.getKeyListeners()) l.keyPressed(forKey(e));
             }
             @Override public void keyReleased(KeyEvent e) {
@@ -157,6 +158,32 @@ public class GameView extends JComponent {
                 e.getClickCount(), e.isPopupTrigger(), e.getButton());
     }
 
+    private java.awt.image.VolatileImage gpuFrame;   // a copy of `frame` in graphics memory, so the GPU does the stretching
+
+    /**
+     * Enlarges the world picture to the window. Stretching a picture with smoothing on the CPU costs about 30 ms
+     * on a 2560x1600 screen (25 fps at most), so the picture is first copied 1:1 into graphics memory (cheap) and
+     * the graphics card does the smooth enlargement. Without a graphics configuration (tests) it falls back to the CPU.
+     */
+    private void stretch(Graphics2D g, java.awt.GraphicsConfiguration gc, int pw, int ph) {
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        if (gc == null || !gc.getImageCapabilities().isAccelerated()) { g.drawImage(frame, 0, 0, pw, ph, null); return; }
+        int w = frame.getWidth(), h = frame.getHeight();
+        for (int attempt = 0; attempt < 3; attempt++) {   // graphics memory can be lost (e.g. screen mode change): redo
+            if (gpuFrame == null || gpuFrame.getWidth() != w || gpuFrame.getHeight() != h
+                    || gpuFrame.validate(gc) == java.awt.image.VolatileImage.IMAGE_INCOMPATIBLE) {
+                if (gpuFrame != null) gpuFrame.flush();
+                gpuFrame = gc.createCompatibleVolatileImage(w, h);
+            }
+            Graphics2D vg = gpuFrame.createGraphics();
+            vg.drawImage(frame, 0, 0, null);
+            vg.dispose();
+            g.drawImage(gpuFrame, 0, 0, pw, ph, null);
+            if (!gpuFrame.contentsLost()) return;
+        }
+        g.drawImage(frame, 0, 0, pw, ph, null);   // still failing: the slow but safe way
+    }
+
     private boolean errorShown;
 
     /** Time spent in the last frame, in nanoseconds: game update, world drawing, copy to the window, text and UI. A diagnostic aid. */
@@ -192,7 +219,9 @@ public class GameView extends JComponent {
         java.awt.GraphicsConfiguration gc = getGraphicsConfiguration();
         double dpi = gc == null ? 1.0 : gc.getDefaultTransform().getScaleX();
         double s = scale() * dpi;                       // real screen pixels per world pixel
-        double rs = Math.min(s, renderCap);             // only when the computer is slow: draw the world smaller, then enlarge
+        // Big screens (and slow computers): draw the world smaller, then let the graphics card enlarge it (stretch()).
+        // Java draws the world on the CPU, so its cost grows with the pixel count; above about 1080p it stops paying off.
+        double rs = Math.min(Math.min(s, renderCap), Math.sqrt(MAX_WORLD_PIXELS / (getWidth() / scale() * (getHeight() / scale()))));
         double vw = getWidth() / scale(), vh = getHeight() / scale(), vx0 = worldX0(), vy0 = worldY0();
         int pw = (int) Math.round(getWidth() * dpi), ph = (int) Math.round(getHeight() * dpi);
         int rw = Math.max(1, (int) Math.round(vw * rs));
@@ -214,10 +243,7 @@ public class GameView extends JComponent {
         g.setTransform(new java.awt.geom.AffineTransform());
         g.translate(origin.getTranslateX(), origin.getTranslateY());
         if (rw == pw && rh == ph) g.drawImage(frame, 0, 0, null);
-        else {
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(frame, 0, 0, pw, ph, null);                // fills the whole window: no bars
-        }
+        else stretch(g, gc, pw, ph);                               // fills the whole window: no bars
         long tCopy = System.nanoTime();
         g.scale(pw / vw, ph / vh);
         g.translate(-vx0, -vy0);

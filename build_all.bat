@@ -2,12 +2,12 @@
 cd /d "%~dp0"
 if not exist out mkdir out
 echo ============================================
-echo  Compiling ALL (CTF game + Visual Lobby)
+echo  Compiling the CTF game (server + client)
 echo ============================================
 
-echo [1/2] Compiling CTF game...
-javac -d out ^
+javac --release 17 -d out ^
   src\ctf\common\MapData.java ^
+  src\ctf\common\LobbyMap.java ^
   src\ctf\common\Protocol.java ^
   src\ctf\common\Snapshot.java ^
   src\ctf\server\Flag.java ^
@@ -25,6 +25,7 @@ javac -d out ^
   src\ctf\client\Sfx.java ^
   src\ctf\client\HD.java ^
   src\ctf\client\Scenery.java ^
+  src\ctf\client\LobbyRoom.java ^
   src\ctf\client\GamePanel.java ^
   src\ctf\client\GameView.java ^
   src\ctf\client\LobbyWindow.java ^
@@ -34,31 +35,15 @@ javac -d out ^
   src\ctf\tools\ConsoleClient.java
 
 if errorlevel 1 (
-  echo [FAIL] CTF compile failed.
+  echo [FAIL] Compile failed.
   pause & exit /b 1
 )
-echo [OK] CTF game compiled.
-
-echo [2/2] Compiling Visual Lobby...
-javac -cp out -d out ^
-  src\lobby\common\LobbyProtocol.java ^
-  src\lobby\common\LobbyMap.java ^
-  src\lobby\server\LobbyServer.java ^
-  src\lobby\client\LobbyEvents.java ^
-  src\lobby\client\LobbyNet.java ^
-  src\lobby\client\LobbyPanel.java ^
-  src\lobby\client\LobbyWindow.java
-
-if errorlevel 1 (
-  echo [FAIL] Lobby compile failed.
-  pause & exit /b 1
-)
-echo [OK] Visual Lobby compiled.
+echo [OK] Compiled.
 echo.
 echo ============================================
 echo  Build complete!  Run order:
-echo    1. run_lobby_server.bat   (host only)
-echo    2. run_lobby_client.bat   (every player)
+echo    1. run_server.bat   (host only)
+echo    2. run_client.bat   (every player; you land in the lobby room)
+echo  Or quick_test_2_players.bat to try it alone.
 echo ============================================
 pause
-

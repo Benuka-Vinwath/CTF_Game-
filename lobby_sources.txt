@@ -1,7 +1,0 @@
-C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\lobby\client\LobbyEvents.java
-C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\lobby\client\LobbyNet.java
-C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\lobby\client\LobbyPanel.java
-C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\lobby\client\LobbyWindow.java
-C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\lobby\common\LobbyMap.java
-C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\lobby\common\LobbyProtocol.java
-C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\lobby\server\LobbyServer.java

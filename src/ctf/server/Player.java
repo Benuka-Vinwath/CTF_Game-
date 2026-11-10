@@ -29,6 +29,9 @@ public class Player {
     public int tags, captures, deaths;
     public int pingMs;                 // reported by the client over TCP
 
+    public int hat, hatColor;          // chosen at the lobby laptop; hat 0 = none
+    public int targetHits;             // practice-target hits in the current lobby
+
     public Player(int id, String name, int team, int token, Conn conn) {
         this.id = id;
         this.name = name;

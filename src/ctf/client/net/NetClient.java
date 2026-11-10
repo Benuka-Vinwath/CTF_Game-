@@ -42,6 +42,7 @@ public class NetClient implements NetLink {
     private volatile int lastRtt;
     private final Map<Integer, String> names = new ConcurrentHashMap<>();
     private volatile Map<Integer, Protocol.Stat> stats = Map.of();
+    private volatile Protocol.Lobby lobby;
 
     private volatile DatagramSocket udp;
     private volatile InetSocketAddress udpServer;
@@ -118,9 +119,13 @@ public class NetClient implements NetLink {
                     if (lobby == null) return;
                     names.clear();
                     for (Protocol.LobbyEntry e : lobby.entries()) names.put(e.id(), e.name());
+                    this.lobby = lobby;
                     events.onLobby(lobby);
                 }
-                case "CHAT" -> events.onChat(arg);
+                case "CHAT" -> {   // CHAT id name: text
+                    String[] t = arg.split(" ", 2);
+                    if (t.length == 2) events.onChat(Integer.parseInt(t[0]), t[1]);
+                }
                 case "START" -> events.onStart();
                 case "STATS" -> {
                     Map<Integer, Protocol.Stat> m = new ConcurrentHashMap<>();
@@ -147,10 +152,21 @@ public class NetClient implements NetLink {
         if (connected && tcpOut != null) tcpOut.println(line);
     }
 
+    @Override
     public void sendReady(boolean ready) { sendTcp(ready ? "READY" : "UNREADY"); }
 
     public void sendTeam(int team) { sendTcp("TEAM " + team); }
 
+    @Override
+    public void sendBegin() { sendTcp("BEGIN"); }
+
+    @Override
+    public void sendLook(int hat, int color) { sendTcp("LOOK " + hat + " " + color); }
+
+    @Override
+    public Protocol.Lobby lobby() { return lobby; }
+
+    @Override
     public void sendChat(String text) {
         if (text != null && !text.isBlank()) sendTcp("CHAT " + text.replace('\n', ' ').replace('\r', ' '));
     }

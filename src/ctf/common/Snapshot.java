@@ -3,6 +3,7 @@ package ctf.common;
 /** One server state update. Part C's Protocol.decode() should produce this; call GamePanel.onSnapshot(). */
 public final class Snapshot {
     public static final int BASE = 0, CARRIED = 1, DROPPED = 2;
+    public static final int LOBBY = 0, PLAYING = 1, ENDED = 2;   // same order as the server's GameState.Phase
 
     public static final class P {
         public int id, team, pingMs, tags, captures;
@@ -30,6 +31,8 @@ public final class Snapshot {
     public int winner = -1;                     // -1 = round running
     public double tentCooldown;                 // remaining cooldown before tent can be used again
     public double matchEndElapsedSec;          // authoritative seconds elapsed since match was won
+    public int phase = PLAYING;                 // LOBBY: draw the waiting room instead of the arena
+    public double countdown;                    // lobby only: seconds until the match starts, 0 = not counting
 
     public long arrivedNs; // set by GamePanel on receipt, used for interpolation
 }

@@ -22,7 +22,7 @@ public class ConsoleClient {
                 for (Protocol.LobbyEntry e : l.entries()) sb.append(e.name()).append(e.ready() ? "*" : "").append("[").append(e.team()).append("] ");
                 System.out.println(sb);
             }
-            @Override public void onChat(String line) { System.out.println(line); }
+            @Override public void onChat(int fromId, String line) { System.out.println(line); }
             @Override public void onStart() {
                 System.out.println(">>> GAME STARTED  (commands now: right, left, up, down, stop, lag, stats)");
                 Thread input = new Thread(() -> {   // what the game screen does: send input about 30 times a second
@@ -53,13 +53,14 @@ public class ConsoleClient {
         client.connect("localhost", 5000, name, -1);
 
         Scanner kb = new Scanner(System.in);
-        System.out.println("Lobby commands: r = ready, u = unready, 0 / 1 = team, quit, anything else is chat");
+        System.out.println("Lobby commands: r = ready, u = unready, s = start (host), 0 / 1 = team, quit, anything else is chat");
         while (kb.hasNextLine()) {
             String t = kb.nextLine();
             switch (t) {
                 case "quit" -> { client.disconnect(); return; }
                 case "r" -> client.sendReady(true);
                 case "u" -> client.sendReady(false);
+                case "s" -> client.sendBegin();
                 case "0" -> client.sendTeam(0);
                 case "1" -> client.sendTeam(1);
                 case "right" -> { dx = 1; dy = 0; }
