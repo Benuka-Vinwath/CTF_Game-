@@ -12,7 +12,7 @@ import java.util.StringJoiner;
  * UDP, client to server (30 per second):
  *   I id token seq dx dy aim shoot
  * UDP, server to client (30 per second):
- *   S tick timeLeftSec redScore blueScore winner tentCooldown matchEndSec
+ *   S tick timeLeftSec redScore blueScore winner tentCooldown matchEndSec phase countdown
  *     flagState x y carrier   (red flag)   flagState x y carrier   (blue flag)
  *     nPlayers  { id team x y aim alive shieldSec }...
  *     nBullets  { x y team }...
@@ -28,9 +28,10 @@ public final class Protocol {
 
     public record Stat(int id, int tags, int captures, int deaths, int score, int ping) {}
 
-    public record LobbyEntry(int id, int team, boolean ready, String name) {}
+    public record LobbyEntry(int id, int team, boolean ready, int hat, int hatColor, int targetHits, String name) {}
 
-    public record Lobby(String phase, int minPlayers, List<LobbyEntry> entries) {}
+    /** mode: players per team (1 = 1v1 ... 4 = 4v4). */
+    public record Lobby(String phase, int minPlayers, int hostId, int mode, List<LobbyEntry> entries) {}
 
     private static String f1(double v) { return String.format(Locale.ROOT, "%.1f", v); }
 
@@ -72,7 +73,8 @@ public final class Protocol {
         sb.append("S ").append(s.tick).append(' ').append(s.timeLeftSec)
           .append(' ').append(s.score[0]).append(' ').append(s.score[1])
           .append(' ').append(s.winner).append(' ').append(f1(s.tentCooldown))
-          .append(' ').append(f1(s.matchEndElapsedSec));
+          .append(' ').append(f1(s.matchEndElapsedSec))
+          .append(' ').append(s.phase).append(' ').append(f2(s.countdown));
         for (Snapshot.F f : s.flags) {
             sb.append(' ').append(f.state).append(' ').append(f1(f.x)).append(' ').append(f1(f.y))
               .append(' ').append(f.carrier);
@@ -94,7 +96,7 @@ public final class Protocol {
     public static Snapshot decodeSnapshot(String line) {
         try {
             String[] t = line.trim().split(" ");
-            if (t.length < 18 || !t[0].equals("S")) return null;
+            if (t.length < 20 || !t[0].equals("S")) return null;
             int i = 1;
             Snapshot s = new Snapshot();
             s.tick = Long.parseLong(t[i++]);
@@ -104,6 +106,8 @@ public final class Protocol {
             s.winner = Integer.parseInt(t[i++]);
             s.tentCooldown = Double.parseDouble(t[i++]);
             s.matchEndElapsedSec = Double.parseDouble(t[i++]);
+            s.phase = Integer.parseInt(t[i++]);
+            s.countdown = Double.parseDouble(t[i++]);
             for (int k = 0; k < 2; k++) {
                 Snapshot.F f = s.flags[k];
                 f.state = Integer.parseInt(t[i++]);
@@ -165,29 +169,33 @@ public final class Protocol {
         return out;
     }
 
-    /** LOBBY phase minPlayers id:team:ready:name,id:team:ready:name,... */
-    public static String encodeLobby(String phase, int minPlayers, List<LobbyEntry> entries) {
+    /** LOBBY phase minPlayers hostId mode id:team:ready:hat:hatColor:targetHits:name,... (name last: cleanName keeps it free of : and ,) */
+    public static String encodeLobby(String phase, int minPlayers, int hostId, int mode, List<LobbyEntry> entries) {
         StringJoiner sj = new StringJoiner(",");
         for (LobbyEntry e : entries) {
-            sj.add(e.id() + ":" + e.team() + ":" + (e.ready() ? 1 : 0) + ":" + e.name());
+            sj.add(e.id() + ":" + e.team() + ":" + (e.ready() ? 1 : 0) + ":" + e.hat() + ":" + e.hatColor()
+                    + ":" + e.targetHits() + ":" + e.name());
         }
-        return "LOBBY " + phase + " " + minPlayers + " " + sj;
+        return "LOBBY " + phase + " " + minPlayers + " " + hostId + " " + mode + " " + sj;
     }
 
     public static Lobby decodeLobby(String line) {
-        String[] t = line.trim().split(" ", 4);
-        if (t.length < 3 || !t[0].equals("LOBBY")) return null;
+        String[] t = line.trim().split(" ", 6);
+        if (t.length < 5 || !t[0].equals("LOBBY")) return null;
         List<LobbyEntry> entries = new ArrayList<>();
         try {
             int min = Integer.parseInt(t[2]);
-            if (t.length == 4 && !t[3].isEmpty()) {
-                for (String e : t[3].split(",")) {
-                    String[] p = e.split(":", 4);
-                    if (p.length < 4) continue;
-                    entries.add(new LobbyEntry(Integer.parseInt(p[0]), Integer.parseInt(p[1]), p[2].equals("1"), p[3]));
+            int host = Integer.parseInt(t[3]);
+            int mode = Integer.parseInt(t[4]);
+            if (t.length == 6 && !t[5].isEmpty()) {
+                for (String e : t[5].split(",")) {
+                    String[] p = e.split(":", 7);
+                    if (p.length < 7) continue;
+                    entries.add(new LobbyEntry(Integer.parseInt(p[0]), Integer.parseInt(p[1]), p[2].equals("1"),
+                            Integer.parseInt(p[3]), Integer.parseInt(p[4]), Integer.parseInt(p[5]), p[6]));
                 }
             }
-            return new Lobby(t[1], min, entries);
+            return new Lobby(t[1], min, host, mode, entries);
         } catch (NumberFormatException e) {
             return null;
         }

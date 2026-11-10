@@ -1,5 +1,6 @@
 package ctf.server;
 
+import ctf.common.LobbyMap;
 import ctf.common.MapData;
 import ctf.common.Protocol;
 import ctf.common.Snapshot;
@@ -41,6 +42,32 @@ public class ServerLogicTest {
             ps.add(g.addPlayer("P" + i, teams[i], c));
         }
         for (Player p : ps) g.setReady(p.id, true);
+        g.begin(ps.get(0).id);   // the first player is the host
+        ticks(COUNTDOWN_TICKS);
+    }
+
+    private static final int COUNTDOWN_TICKS = (int) (GameState.COUNTDOWN_SEC * GameState.TICK_RATE) + 1;
+
+    /** A lobby with one unready player per entry of teams. */
+    private void newLobby(int... teams) {
+        g = new GameState(teams.length, 5000, new Random(1));
+        ps.clear();
+        conns.clear();
+        seq = 0;
+        for (int i = 0; i < teams.length; i++) {
+            FakeConn c = new FakeConn();
+            conns.add(c);
+            ps.add(g.addPlayer("P" + i, teams[i], c));
+        }
+    }
+
+    private void winMatch(Player a) {
+        for (int i = 0; i < 3; i++) {
+            place(a, MapData.BASES[1][0], MapData.BASES[1][1]);
+            g.tick();
+            place(a, MapData.BASES[0][0], MapData.BASES[0][1]);
+            g.tick();
+        }
     }
 
     private Player p(int i) { return ps.get(i); }
@@ -55,18 +82,148 @@ public class ServerLogicTest {
 
     // ------------------------------------------------------------------ tests
 
-    void lobbyStartsWhenAllReady() {
+    void hostStartsWhenAllReady() {
         g = new GameState(2, 5000, new Random(1));
         FakeConn c0 = new FakeConn(), c1 = new FakeConn();
         Player a = g.addPlayer("A", 0, c0), b = g.addPlayer("B", 1, c1);
         check(g.phase() == GameState.Phase.LOBBY, "starts in lobby");
+        check(c0.got("LOBBY LOBBY 2 " + a.id + " "), "LOBBY line names the first player as host");
         g.setReady(a.id, true);
-        check(g.phase() == GameState.Phase.LOBBY, "one ready player is not enough");
+        g.begin(a.id);
+        check(g.countdown() == 0, "host cannot start while someone is not ready");
         g.setReady(b.id, true);
-        check(g.phase() == GameState.Phase.PLAYING, "round starts when all are ready");
+        check(g.phase() == GameState.Phase.LOBBY, "everyone ready does not start by itself");
+        g.begin(b.id);
+        check(g.countdown() == 0, "a player who is not the host cannot start");
+        g.begin(a.id);
+        check(g.countdown() == GameState.COUNTDOWN_SEC, "host starts a 5 s countdown");
+        ticks(COUNTDOWN_TICKS - 5);
+        check(g.phase() == GameState.Phase.LOBBY, "still in the lobby during the countdown");
+        ticks(5);
+        check(g.phase() == GameState.Phase.PLAYING, "round starts when the countdown ends");
         check(c0.got("START") && c1.got("START"), "START sent to everyone");
         check(c0.got("WELCOME " + a.id + " " + a.token + " 5000 0"), "WELCOME carries id, token, port, team");
         check(a.x == MapData.BASES[0][0] && b.x == MapData.BASES[1][0], "players spawn at their bases");
+    }
+
+    void countdownCancelsWhenSomeoneUnreadies() {
+        newLobby(0, 1);
+        for (Player p : ps) g.setReady(p.id, true);
+        g.begin(p(0).id);
+        ticks(30);
+        g.setReady(p(1).id, false);
+        check(g.countdown() == 0, "un-readying stops the countdown");
+        ticks(COUNTDOWN_TICKS);
+        check(g.phase() == GameState.Phase.LOBBY, "and the match does not start");
+        g.setReady(p(1).id, true);
+        g.begin(p(0).id);
+        g.addPlayer("Late", -1, new FakeConn());
+        check(g.countdown() == 0, "a new unready player stops the countdown too");
+    }
+
+    void hostPassesOnWhenTheyLeave() {
+        newLobby(0, 1, 0, 1);
+        g.removePlayer(p(0).id);
+        g.begin(p(1).id);
+        check(g.countdown() == 0, "nobody can start with fewer than the minimum players");
+        Player late = g.addPlayer("New", 0, new FakeConn());
+        for (Player p : List.of(p(1), p(2), p(3), late)) g.setReady(p.id, true);
+        g.begin(late.id);
+        check(g.countdown() == 0, "the newest player is not the host");
+        g.begin(p(1).id);
+        check(g.countdown() > 0, "the next player becomes host and can start");
+    }
+
+    void matchSizeIsChosenByHostAndNeedsFullTeams() {
+        newLobby(0, 1);
+        check(g.mode() == 1, "two players make a 1v1");
+        g.setMode(p(1).id, 2);
+        check(g.mode() == 1, "only the host can change the match size");
+        g.setMode(p(0).id, 2);
+        check(g.mode() == 2, "the host picks 2v2");
+        for (Player p : ps) g.setReady(p.id, true);
+        g.begin(p(0).id);
+        check(g.countdown() == 0, "2v2 cannot start with one player per team");
+        Player c = g.addPlayer("C", 0, new FakeConn()), d = g.addPlayer("D", 1, new FakeConn());
+        g.setReady(c.id, true);
+        g.setReady(d.id, true);
+        g.begin(p(0).id);
+        check(g.countdown() > 0, "2v2 starts once both teams have two ready players");
+        g.setMode(p(0).id, 1);
+        check(g.mode() == 2, "the size cannot drop below a team's current size");
+        g.addPlayer("E", -1, new FakeConn());
+        check(g.mode() == 3 && g.countdown() == 0, "a fifth player grows the match to 3v3 and stops the countdown");
+        place(c, LobbyMap.PADS[1][0], LobbyMap.PADS[1][1]);
+        g.tick();
+        check(c.team == 1, "pads allow moving while the other team has room");
+        FakeConn fc = new FakeConn();
+        g.addPlayer("F", 0, 4, 99, fc);
+        check(fc.lines.stream().anyMatch(l -> l.startsWith("LOBBY") && l.contains(":4:" + (99 % LobbyMap.HAT_COLORS) + ":0:F")),
+                "a hat picked in the menu arrives with HELLO and is wrapped into range");
+    }
+
+    void lobbyIsSafeAndHasItsOwnWalls() {
+        newLobby(0, 1);
+        Player a = p(0), b = p(1);
+        check(Math.hypot(a.x - LobbyMap.SPAWN_X, a.y - LobbyMap.SPAWN_Y) < 100, "players appear in the lobby room");
+        place(a, 300, 200);
+        place(b, 400, 200);
+        input(a, 0, 0, 0, true);
+        ticks(25);
+        check(b.alive && a.tags == 0, "bullets cannot hurt anyone in the lobby");
+        double[] w = LobbyMap.WALLS[0];
+        place(a, w[0] + w[2] / 2, w[1] + w[3] + 40);
+        for (int i = 0; i < 30; i++) { input(a, 0, -1, 0, false); g.tick(); }
+        check(a.y >= w[1] + w[3] + MapData.R - 1e-6, "lobby crates block movement (y=" + a.y + ")");
+        double[] mapWall = MapData.WALLS[0];   // the arena's centre column is not in the lobby
+        place(a, mapWall[0] - 40, mapWall[1] + 20);
+        for (int i = 0; i < 20; i++) { input(a, 1, 0, 0, false); g.tick(); }
+        check(a.x > mapWall[0], "arena walls do not exist in the lobby");
+    }
+
+    void practiceTargetsCountHits() {
+        newLobby(0, 1);
+        Player a = p(0);
+        double[] t = LobbyMap.TARGETS[1];
+        place(a, t[0], t[1] - 150);
+        input(a, 0, 0, Math.PI / 2, true);   // straight down at the target
+        ticks(20);
+        check(a.targetHits == 1, "hitting a practice target counts (" + a.targetHits + ")");
+        check(g.bulletCount() == 0, "the bullet stops at the target");
+        check(conns.get(1).lines.stream().anyMatch(l -> l.startsWith("LOBBY") && l.contains(":1:P0")),
+                "everyone is told the new hit count");
+    }
+
+    void teamPadsSwitchTeamUpToTheCap() {
+        newLobby(0, 0, 0, 0, 1);
+        Player blue = p(4), red = p(0);
+        place(blue, LobbyMap.PADS[0][0], LobbyMap.PADS[0][1]);
+        g.tick();
+        check(blue.team == 1, "a full team pad does nothing");
+        place(red, LobbyMap.PADS[1][0], LobbyMap.PADS[1][1]);
+        g.tick();
+        check(red.team == 1, "standing on the blue pad joins blue");
+        g.tick();
+        check(blue.team == 0, "now red has room again, so the blue player on the red pad joins red");
+    }
+
+    void lookNeedsTheLaptop() {
+        newLobby(0, 1);
+        Player a = p(0);
+        place(a, 300, 300);
+        g.setLook(a.id, 2, 3);
+        check(a.hat == 0, "hat cannot change away from the laptop");
+        place(a, LobbyMap.LAPTOP_X, LobbyMap.LAPTOP_Y + 50);
+        g.setLook(a.id, 2, 3);
+        check(a.hat == 2 && a.hatColor == 3, "hat changes at the laptop");
+        g.setLook(a.id, -1, 99);
+        check(a.hat == LobbyMap.HATS - 1 && a.hatColor == 99 % LobbyMap.HAT_COLORS, "out-of-range looks wrap around");
+    }
+
+    void chatCarriesSenderId() {
+        newLobby(0, 1);
+        g.chat(p(0).id, "hi there");
+        check(conns.get(1).got("CHAT " + p(0).id + " P0: hi there"), "chat line carries the sender's id for the bubble");
     }
 
     void movementMatchesClientPrediction() {
@@ -128,7 +285,7 @@ public class ServerLogicTest {
     }
 
     void friendlyFireAndShield() {
-        newGame(0, 1, 0);
+        newGame(0, 1, 0, 1);   // 2v2: teams must be full to start; the fourth player waits at the blue base
         Player a = p(0), b = p(1), c = p(2);
         place(a, 100, 200);
         place(c, 200, 200);
@@ -241,15 +398,10 @@ public class ServerLogicTest {
         check(b.shieldSec > 4.9, "the recharged tent works again");
     }
 
-    void threeCapturesEndTheMatchAndRematchWorks() {
+    void threeCapturesEndTheMatchAndEveryoneGoesBackToTheLobby() {
         newGame(0, 1);
         Player a = p(0);
-        for (int i = 0; i < 3; i++) {
-            place(a, MapData.BASES[1][0], MapData.BASES[1][1]);
-            g.tick();
-            place(a, MapData.BASES[0][0], MapData.BASES[0][1]);
-            g.tick();
-        }
+        winMatch(a);
         check(g.phase() == GameState.Phase.ENDED && g.winner() == 0, "three captures end the match for the capturing team");
         check(conns.get(1).got("GAMEOVER 0 3 0"), "GAMEOVER is sent to every client");
         ticks(30);
@@ -257,24 +409,22 @@ public class ServerLogicTest {
         check(s != null && s.winner == 0 && s.matchEndElapsedSec > 0.9, "snapshot shows the winner and the elapsed time since the end");
         g.wantAgain(a.id);
         ticks(2);
-        check(g.phase() == GameState.Phase.ENDED, "rematch waits for every player");
+        check(g.phase() == GameState.Phase.ENDED, "going back waits for every player");
         g.wantAgain(p(1).id);
         ticks(2);
-        check(g.phase() == GameState.Phase.PLAYING && g.score(0) == 0 && a.captures == 0 && g.winner() == -1,
-                "rematch resets score and stats");
+        check(g.phase() == GameState.Phase.LOBBY && g.winner() == -1 && !a.ready, "everyone is back in the lobby, not ready");
+        check(Math.hypot(a.x - LobbyMap.SPAWN_X, a.y - LobbyMap.SPAWN_Y) < 100, "and standing in the lobby room");
+        for (Player p : ps) g.setReady(p.id, true);
+        g.begin(a.id);
+        ticks(COUNTDOWN_TICKS);
+        check(g.phase() == GameState.Phase.PLAYING && g.score(0) == 0 && a.captures == 0, "the next match resets score and stats");
     }
 
-    void rematchStartsByItselfAfterTimeout() {
+    void backToLobbyByItselfAfterTimeout() {
         newGame(0, 1);
-        Player a = p(0);
-        for (int i = 0; i < 3; i++) {
-            place(a, MapData.BASES[1][0], MapData.BASES[1][1]);
-            g.tick();
-            place(a, MapData.BASES[0][0], MapData.BASES[0][1]);
-            g.tick();
-        }
+        winMatch(p(0));
         ticks((int) (GameState.AGAIN_TIMEOUT_SEC * GameState.TICK_RATE) + 5);
-        check(g.phase() == GameState.Phase.PLAYING, "a new round starts after the 90 s victory screen");
+        check(g.phase() == GameState.Phase.LOBBY, "everyone returns to the lobby after the 90 s victory screen");
     }
 
     void timerDecidesByScoreThenTags() {
@@ -333,18 +483,25 @@ public class ServerLogicTest {
         check(Protocol.decodeSnapshot("garbage") == null, "garbage snapshot is rejected");
         String line = g.snapshotLine();
         check(Protocol.decodeSnapshot(line.substring(0, line.length() / 2)) == null, "truncated snapshot is rejected");
-        check(Protocol.decodeSnapshot("S 1 300 0 0 -1 0.0 0.0 0 0.0 0.0 -1 0 0.0 0.0 -1 99999 0") == null,
+        check(Protocol.decodeSnapshot("S 1 300 0 0 -1 0.0 0.0 1 0.00 0 0.0 0.0 -1 0 0.0 0.0 -1 99999 0") == null,
                 "an absurd player count is rejected");
+        check(s.phase == Snapshot.PLAYING && s.countdown == 0, "phase survives the round trip");
 
         Protocol.Input in = Protocol.decodeInput("I 3 77 9 5 -9 1.5 1");
         check(in != null && in.dx() == 1 && in.dy() == -1 && in.shoot(), "input direction is clamped to -1..1");
         check(Protocol.decodeInput("I 3 77 9 1 0 NaN 1") == null, "NaN aim is rejected");
         check(Protocol.decodeInput("I 3 77 9") == null, "short input is rejected");
 
-        Protocol.Lobby lob = Protocol.decodeLobby(Protocol.encodeLobby("LOBBY", 2,
-                List.of(new Protocol.LobbyEntry(1, 0, true, "Ann"), new Protocol.LobbyEntry(2, 1, false, "Bob"))));
+        Protocol.Lobby lob = Protocol.decodeLobby(Protocol.encodeLobby("LOBBY", 2, 1, 3,
+                List.of(new Protocol.LobbyEntry(1, 0, true, 3, 4, 7, "Ann"), new Protocol.LobbyEntry(2, 1, false, 0, 0, 0, "Bob"))));
         check(lob != null && lob.entries().size() == 2 && lob.entries().get(0).ready() && lob.entries().get(1).name().equals("Bob"),
                 "lobby list round trip");
+        check(lob.hostId() == 1 && lob.mode() == 3 && lob.entries().get(0).hat() == 3 && lob.entries().get(0).hatColor() == 4
+                && lob.entries().get(0).targetHits() == 7, "host, hat and target hits survive the round trip");
+
+        newLobby(0);
+        Snapshot ls = Protocol.decodeSnapshot(g.snapshotLine());
+        check(ls != null && ls.phase == Snapshot.LOBBY, "lobby snapshot says LOBBY");
         List<Protocol.Stat> st = Protocol.decodeStats(Protocol.encodeStats(List.of(new Protocol.Stat(1, 2, 3, 4, 5, 6))));
         check(st.size() == 1 && st.get(0).score() == 5 && st.get(0).ping() == 6, "stats round trip");
         check(Protocol.cleanName("Al ice;:|!!!!!!!!!!!!!").length() == 12, "names are cleaned and limited to 12 characters");
@@ -365,7 +522,15 @@ public class ServerLogicTest {
 
     public static void main(String[] args) {
         ServerLogicTest t = new ServerLogicTest();
-        t.run("lobby", t::lobbyStartsWhenAllReady);
+        t.run("host start", t::hostStartsWhenAllReady);
+        t.run("countdown cancel", t::countdownCancelsWhenSomeoneUnreadies);
+        t.run("host leaves", t::hostPassesOnWhenTheyLeave);
+        t.run("match size", t::matchSizeIsChosenByHostAndNeedsFullTeams);
+        t.run("lobby safe, own walls", t::lobbyIsSafeAndHasItsOwnWalls);
+        t.run("practice targets", t::practiceTargetsCountHits);
+        t.run("team pads", t::teamPadsSwitchTeamUpToTheCap);
+        t.run("laptop look", t::lookNeedsTheLaptop);
+        t.run("chat id", t::chatCarriesSenderId);
         t.run("movement", t::movementMatchesClientPrediction);
         t.run("walls", t::wallsBlockMovement);
         t.run("stale input", t::staleInputStopsPlayer);
@@ -379,8 +544,8 @@ public class ServerLogicTest {
         t.run("carrier killed", t::killedCarrierDropsFlagAndTeammateReturnsIt);
         t.run("flag timeout", t::droppedFlagReturnsAfterTenSeconds);
         t.run("tent", t::tentGivesShieldOnceThenRecharges);
-        t.run("win and rematch", t::threeCapturesEndTheMatchAndRematchWorks);
-        t.run("rematch timeout", t::rematchStartsByItselfAfterTimeout);
+        t.run("win and back to lobby", t::threeCapturesEndTheMatchAndEveryoneGoesBackToTheLobby);
+        t.run("back to lobby timeout", t::backToLobbyByItselfAfterTimeout);
         t.run("timer end", t::timerDecidesByScoreThenTags);
         t.run("late join", t::lateJoinerDropsStraightIn);
         t.run("server full", t::serverFullIsRefused);

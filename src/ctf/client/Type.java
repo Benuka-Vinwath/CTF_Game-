@@ -37,6 +37,44 @@ final class Type {
     /** Display face with extra letter spacing, for the VICTORY heading. */
     static Font heading(float size) { return make(DISPLAY, Font.BOLD, size, 0.12f); }
 
+    // The ThroneFall brand faces (SIL Open Font License, shipped in assets/fonts). If a file is missing the
+    // matching system face above is used, so the game never fails to start over a font.
+    private static final Font LOGO = load("CinzelDecorative-Black.ttf");
+    private static final Font ROYAL = load("Cinzel-Black.ttf"), ROYAL_BOLD = load("Cinzel-Bold.ttf");
+    private static final Font HUD = load("Rajdhani-Bold.ttf"), HUD_SEMI = load("Rajdhani-SemiBold.ttf");
+
+    /** The "ThroneFall" logo. */
+    static Font logo(float size) { return derive(LOGO, size, 0.02f, () -> display(size)); }
+
+    /** Menu items, screen titles and buttons; black = heaviest weight. */
+    static Font royal(float size, boolean black, float tracking) {
+        return derive(black ? ROYAL : ROYAL_BOLD, size, tracking, () -> make(DISPLAY, Font.BOLD, size, tracking));
+    }
+
+    /** Hints, fields, addresses and numbers in the menu. */
+    static Font hud(float size, boolean bold, float tracking) {
+        return derive(bold ? HUD : HUD_SEMI, size, tracking, () -> make(UI, Font.BOLD, size, tracking));
+    }
+
+    private static Font load(String file) {
+        try {
+            return Font.createFont(Font.TRUETYPE_FONT, new java.io.File("assets/fonts", file));
+        } catch (Exception e) {
+            return null;   // missing or unreadable: fall back to a system face
+        }
+    }
+
+    private static synchronized Font derive(Font base, float size, float tracking, java.util.function.Supplier<Font> fallback) {
+        if (base == null) return fallback.get();
+        return CACHE.computeIfAbsent(base.getFontName() + ":" + size + ":" + tracking, k -> {
+            Map<TextAttribute, Object> a = new HashMap<>();
+            a.put(TextAttribute.SIZE, size);
+            a.put(TextAttribute.KERNING, TextAttribute.KERNING_ON);
+            a.put(TextAttribute.TRACKING, tracking);
+            return base.deriveFont(a);
+        });
+    }
+
     private static synchronized Font make(String family, int style, float size, float tracking) {
         return CACHE.computeIfAbsent(family + style + ":" + size + ":" + tracking, k -> {
             Map<TextAttribute, Object> a = new HashMap<>();

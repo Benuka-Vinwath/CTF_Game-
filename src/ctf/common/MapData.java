@@ -23,10 +23,13 @@ public final class MapData {
     public static final double TENT_RECHARGE = 10.0; // cooldown in seconds before tent can be collected again
 
     /** Keeps a circle of radius R inside the arena and out of walls. */
-    public static void resolve(double[] p) {
+    public static void resolve(double[] p) { resolve(p, WALLS); }
+
+    /** The same for another room of the same size with its own walls (the lobby). */
+    public static void resolve(double[] p, double[][] walls) {
         p[0] = Math.max(R, Math.min(W - R, p[0]));
         p[1] = Math.max(R, Math.min(H - R, p[1]));
-        for (double[] w : WALLS) {
+        for (double[] w : walls) {
             double cx = Math.max(w[0], Math.min(p[0], w[0] + w[2]));
             double cy = Math.max(w[1], Math.min(p[1], w[1] + w[3]));
             double dx = p[0] - cx, dy = p[1] - cy, d = Math.hypot(dx, dy);
@@ -44,9 +47,11 @@ public final class MapData {
     }
 
     /** True if (x, y) is within margin m of a wall or the arena edge (m = 0: inside one). */
-    public static boolean nearSolid(double x, double y, double m) {
+    public static boolean nearSolid(double x, double y, double m) { return nearSolid(x, y, m, WALLS); }
+
+    public static boolean nearSolid(double x, double y, double m, double[][] walls) {
         if (x < m || x > W - m || y < m || y > H - m) return true;
-        for (double[] w : WALLS)
+        for (double[] w : walls)
             if (x >= w[0] - m && x <= w[0] + w[2] + m && y >= w[1] - m && y <= w[1] + w[3] + m) return true;
         return false;
     }
