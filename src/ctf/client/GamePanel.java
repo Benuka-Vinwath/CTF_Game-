@@ -1,6 +1,8 @@
 package ctf.client;
 
+import ctf.common.LobbyMap;
 import ctf.common.MapData;
+import ctf.common.Protocol;
 import ctf.common.Snapshot;
 
 import javax.swing.*;
@@ -96,6 +98,15 @@ public class GamePanel extends JPanel {
     private double smokeT;
     private final List<Object[]> blooms = new ArrayList<>();      // {x, y, Color, age}: short light flashes at each firework burst
 
+    // lobby: the waiting room, in-game chat and the ready / start buttons
+    private final LobbyRoom room = new LobbyRoom();
+    private boolean typing;                                       // ENTER opened the chat line; keys go to the text
+    private final StringBuilder chatText = new StringBuilder();
+    private final Map<Integer, Object[]> bubbles = new HashMap<>(); // player id -> {text, expiryNs}: chat above heads
+    private final Rectangle2D.Double readyBtn = new Rectangle2D.Double(), startBtn = new Rectangle2D.Double(); // world units
+    private boolean hoverReady, hoverStart;
+    private final Rectangle2D.Double[] modeBtns = {new Rectangle2D.Double(), new Rectangle2D.Double(), new Rectangle2D.Double(), new Rectangle2D.Double()};
+
     public GamePanel(NetLink link, int myId) {
         this.link = link;
         this.myId = myId;
@@ -109,6 +120,22 @@ public class GamePanel extends JPanel {
         addKeyListener(new KeyAdapter() {
             @Override public void keyPressed(KeyEvent e) {
                 int k = e.getKeyCode();
+                if (typing) { typeKey(e); return; }
+                if (k == KeyEvent.VK_ENTER && (last == null || last.winner < 0)) { // open the chat line
+                    typing = true;
+                    keys.clear();
+                    mouseDown = false;
+                    return;
+                }
+                if (inLobby()) {
+                    if (k == KeyEvent.VK_R) link.sendReady(!amReady());
+                    if ((k == KeyEvent.VK_E || k == KeyEvent.VK_C) && nearLaptop()) {
+                        Protocol.LobbyEntry me = entry(myId);
+                        int hat = me == null ? 0 : me.hat(), col = me == null ? 0 : me.hatColor();
+                        if (k == KeyEvent.VK_E) hat++; else col++;
+                        link.sendLook(hat, col);   // the server wraps the values and checks we are at the laptop
+                    }
+                }
                 keys.add(k);
                 if (k == KeyEvent.VK_TAB) {
                     if (last != null && last.winner >= 0) {
@@ -133,7 +160,13 @@ public class GamePanel extends JPanel {
         MouseAdapter m = new MouseAdapter() {
             @Override public void mouseMoved(MouseEvent e) {
                 mouseX = e.getX(); mouseY = e.getY();
-                if (last != null && last.winner >= 0) {
+                if (inLobby()) {
+                    hoverReady = readyBtn.contains(mouseX, mouseY);
+                    hoverStart = startBtn.contains(mouseX, mouseY);
+                    boolean overMode = false;
+                    if (amHost()) for (Rectangle2D.Double r : modeBtns) overMode |= r.contains(mouseX, mouseY);
+                    setCursor(Cursor.getPredefinedCursor(hoverReady || hoverStart || overMode ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                } else if (last != null && last.winner >= 0) {
                     boolean autoLb = (last.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
                     boolean showingLb = autoLb || viewLeaderboardManual;
                     boolean anyHover;
@@ -152,6 +185,12 @@ public class GamePanel extends JPanel {
             @Override public void mouseDragged(MouseEvent e) { mouseMoved(e); }
             @Override public void mousePressed(MouseEvent e) {
                 if (e.getButton() != MouseEvent.BUTTON1) return;
+                if (inLobby()) { // buttons take the click; it does not also fire a shot
+                    if (readyBtn.contains(e.getX(), e.getY())) { link.sendReady(!amReady()); return; }
+                    if (startBtn.contains(e.getX(), e.getY())) { if (lobbyCanStart()) link.sendBegin(); return; }
+                    for (int i = 0; i < 4; i++)
+                        if (modeBtns[i].contains(e.getX(), e.getY())) { if (amHost()) link.sendMode(i + 1); return; }
+                }
                 if (last != null && last.winner >= 0) {
                     boolean autoLb = (last.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
                     boolean showingLb = autoLb || viewLeaderboardManual;
@@ -199,6 +238,85 @@ public class GamePanel extends JPanel {
         SwingUtilities.invokeLater(() -> accept(s));
     }
 
+    /** A chat line "name: text" from player fromId: shown in the feed and as a bubble over their head. */
+    public void onChat(int fromId, String line) {
+        SwingUtilities.invokeLater(() -> {
+            say(line, new Color(235, 230, 255));
+            int colon = line.indexOf(": ");
+            String text = colon >= 0 ? line.substring(colon + 2) : line;
+            if (text.length() > 42) text = text.substring(0, 40) + "...";
+            bubbles.put(fromId, new Object[]{text, System.nanoTime() + 4_500_000_000L});
+        });
+    }
+
+    // ---------- lobby helpers ----------
+
+    private boolean inLobby() { return last != null && last.phase == Snapshot.LOBBY; }
+
+    /** The walls of the room we are in: prediction and bullet effects must use the same ones as the server. */
+    private double[][] walls() { return inLobby() ? LobbyMap.WALLS : MapData.WALLS; }
+
+    private Protocol.LobbyEntry entry(int id) {
+        Protocol.Lobby l = link.lobby();
+        if (l != null) for (Protocol.LobbyEntry e : l.entries()) if (e.id() == id) return e;
+        return null;
+    }
+
+    private boolean amReady() { Protocol.LobbyEntry e = entry(myId); return e != null && e.ready(); }
+
+    private boolean amHost() { Protocol.Lobby l = link.lobby(); return l != null && l.hostId() == myId; }
+
+    private boolean nearLaptop() { return predReady && LobbyMap.nearLaptop(pred[0], pred[1]); }
+
+    /** Mirrors the server's rule, only to grey out the button; the server decides. */
+    private boolean lobbyCanStart() {
+        Protocol.Lobby l = link.lobby();
+        if (l == null || l.entries().size() < l.minPlayers()) return false;
+        int[] team = new int[2];
+        for (Protocol.LobbyEntry e : l.entries()) {
+            if (!e.ready()) return false;
+            team[Math.max(0, Math.min(1, e.team()))]++;
+        }
+        return l.minPlayers() <= 1 || (team[0] == l.mode() && team[1] == l.mode());   // both teams full, like the server
+    }
+
+    /** Host only: the 1v1 .. 4v4 buttons above START. Others see the chosen size, greyed. */
+    private void drawModePicker(Graphics2D g, double x, double y, double w) {
+        Protocol.Lobby l = link.lobby();
+        int mode = l == null ? 1 : l.mode();
+        boolean host = amHost();
+        g.setFont(Type.ui(11.5f, true));
+        Art.text(g, host ? "MATCH SIZE" : "MATCH SIZE (host picks)", x, y - 6, new Color(170, 150, 235));
+        double bw = (w - 3 * 8) / 4;
+        for (int i = 0; i < 4; i++) {
+            Rectangle2D.Double r = modeBtns[i];
+            r.setRect(x + i * (bw + 8), y, bw, 34);
+            boolean on = mode == i + 1, hover = host && r.contains(mouseX, mouseY);
+            Color c = on ? GOLD : hover ? new Color(200, 190, 240) : new Color(110, 95, 160);
+            Art.plate(g, r.x, r.y, r.width, r.height, 7, c, time, fx && on);
+            g.setFont(Type.numbers(16));
+            Art.textCenter(g, (i + 1) + "v" + (i + 1), r.x, r.width, r.y + 23, on ? GOLD : host ? Color.WHITE : new Color(150, 145, 175));
+        }
+    }
+
+    private void typeKey(KeyEvent e) {
+        int k = e.getKeyCode();
+        if (k == KeyEvent.VK_ENTER) {
+            String t = chatText.toString().trim();
+            if (!t.isEmpty()) link.sendChat(t);
+            chatText.setLength(0);
+            typing = false;
+        } else if (k == KeyEvent.VK_ESCAPE) {
+            chatText.setLength(0);
+            typing = false;
+        } else if (k == KeyEvent.VK_BACK_SPACE) {
+            if (chatText.length() > 0) chatText.setLength(chatText.length() - 1);
+        } else {
+            char c = e.getKeyChar();
+            if (c != KeyEvent.CHAR_UNDEFINED && c >= ' ' && c != 127 && chatText.length() < 120) chatText.append(c);
+        }
+    }
+
     private void accept(Snapshot s) {
         if (last != null) detectEvents(last, s);
         prev = last;
@@ -221,6 +339,8 @@ public class GamePanel extends JPanel {
     boolean effectsOn() { return fx; }
 
     void setEffects(boolean on) { fx = on; }
+
+    void setShake(boolean on) { shakeOn = on; }
 
     /** Shows a short message in the event feed. */
     void tell(String message) { say(message); }
@@ -250,7 +370,7 @@ public class GamePanel extends JPanel {
             double len = Math.hypot(dx, dy);
             pred[0] += dx / len * MapData.SPEED * dt;
             pred[1] += dy / len * MapData.SPEED * dt;
-            MapData.resolve(pred);
+            MapData.resolve(pred, walls());
         }
         double aim = predReady ? Math.atan2(mouseY - pred[1], mouseX - pred[0]) : 0;
 
@@ -327,8 +447,10 @@ public class GamePanel extends JPanel {
             double left = e.getValue() - dt;
             if (left <= 0) it.remove(); else e.setValue(left);
         }
+        room.step(dt);
+        bubbles.values().removeIf(b -> (long) b[1] < now);
         smokeT -= dt;
-        if (fx && smokeT <= 0) { // smoke and sparks rising from the braziers
+        if (fx && smokeT <= 0 && !inLobby()) { // smoke and sparks rising from the braziers
             smokeT = 0.14;
             for (double[] w : MapData.WALLS) {
                 double tx = w[0] + w[2] / 2, ty = w[1] - 16;
@@ -371,7 +493,9 @@ public class GamePanel extends JPanel {
             g[7] = g[0] + g[2] * g[5];
             g[8] = g[1] + g[3] * g[5];
             if (matchedNow[i]) g[6] = 1;
-            if (MapData.nearSolid(g[7], g[8], 0)) { // wall impact, shown at once on our own screen
+            int target = inLobby() ? LobbyMap.targetHit(g[7] - g[2] * dt, g[8] - g[3] * dt, g[7], g[8]) : -1;
+            if (target >= 0) room.hitTarget(target);
+            if (target >= 0 || MapData.nearSolid(g[7], g[8], 0, walls())) { // wall or target impact, shown at once on our own screen
                 impact(g[7], g[8], (int) g[4]);
                 Sfx.play("wall");
                 recentImpacts.add(new double[]{g[7], g[8], 0});
@@ -400,6 +524,23 @@ public class GamePanel extends JPanel {
     // ---------- events inferred from snapshot differences ----------
 
     private void detectEvents(Snapshot a, Snapshot b) {
+        if (a.phase != b.phase) {
+            ghosts.clear();
+            setCursor(Cursor.getDefaultCursor());
+            if (b.phase == Snapshot.PLAYING) {
+                announce("FIGHT!", GOLD);
+                Sfx.play("score");
+            } else if (b.phase == Snapshot.LOBBY) {
+                say("Back in the lobby", GOLD);
+                viewLeaderboardManual = false;
+                celebrationWinner = -1;
+            }
+        }
+        if (a.phase == Snapshot.LOBBY && b.phase == Snapshot.LOBBY) {
+            if (a.countdown > 0 && b.countdown <= 0) say("Countdown cancelled", new Color(255, 130, 100));
+            if (b.countdown > 0 && Math.ceil(a.countdown) != Math.ceil(b.countdown)) Sfx.play("pickup"); // one beep per second
+        }
+        double[][] oldWalls = a.phase == Snapshot.LOBBY ? LobbyMap.WALLS : MapData.WALLS;
         for (Snapshot.P p : b.players) {
             Snapshot.P o = find(a, p.id);
             if (o == null) { say(p.name + " joined"); continue; }
@@ -436,7 +577,19 @@ public class GamePanel extends JPanel {
             for (double[] n : b.bullets) if (Math.hypot(n[0] - o[0], n[1] - o[1]) < 30) { still = true; break; }
             boolean ours = false;
             for (double[] r : recentImpacts) if (Math.hypot(r[0] - o[0], r[1] - o[1]) < 40) ours = true;
-            if (!still) {
+            if (!still && a.phase == Snapshot.LOBBY && b.phase == Snapshot.LOBBY) { // only targets and walls in the lobby
+                boolean popped = false;
+                for (int i = 0; i < LobbyMap.TARGETS.length; i++) {
+                    double[] t = LobbyMap.TARGETS[i];
+                    if (Math.hypot(t[0] - o[0], t[1] - o[1]) < t[2] + 26) {
+                        room.hitTarget(i);
+                        if (!ours) { burst(o[0], o[1], new Color(255, 220, 160), 10, 120); Sfx.play("wall"); }
+                        popped = true;
+                        break;
+                    }
+                }
+                if (!popped && !ours && MapData.nearSolid(o[0], o[1], 24, oldWalls)) impact(o[0], o[1], teamOf(o));
+            } else if (!still && a.phase != Snapshot.LOBBY) {
                 boolean deflected = false;
                 for (Snapshot.P p : b.players) {
                     if (p.shieldSec > 0 && Math.hypot(p.x - o[0], p.y - o[1]) < MapData.R + 12) {
@@ -447,7 +600,7 @@ public class GamePanel extends JPanel {
                         break;
                     }
                 }
-                if (!deflected && !ours && MapData.nearSolid(o[0], o[1], 24)) impact(o[0], o[1], teamOf(o));
+                if (!deflected && !ours && MapData.nearSolid(o[0], o[1], 24, oldWalls)) impact(o[0], o[1], teamOf(o));
             }
         }
 
@@ -604,11 +757,17 @@ public class GamePanel extends JPanel {
         shakeX = (rnd.nextDouble() - 0.5) * sh; shakeY = (rnd.nextDouble() - 0.5) * sh;
         g.translate(shakeX, shakeY);
 
-        scenery.drawBack(g, vX0(), vY0(), vW(), vH(), camX, camY, time, fx);
-        drawBases(g);   // the walls are part of the cached backdrop (Scenery.buildBack), not redrawn every frame
-        drawTorches(g);
-        Art.tent(g, MapData.TENT_X, MapData.TENT_Y, s.tentCooldown <= 0 ? 1.0 : 1.0 - s.tentCooldown / MapData.TENT_RECHARGE, time, fx);
-        drawEntities(g, s);
+        boolean lobby = s.phase == Snapshot.LOBBY;
+        if (lobby) {
+            room.drawWorld(g, vX0(), vY0(), vW(), vH(), time, fx);
+            drawPlayers(g, s);
+        } else {
+            scenery.drawBack(g, vX0(), vY0(), vW(), vH(), camX, camY, time, fx);
+            drawBases(g);   // the walls are part of the cached backdrop (Scenery.buildBack), not redrawn every frame
+            drawTorches(g);
+            Art.tent(g, MapData.TENT_X, MapData.TENT_Y, s.tentCooldown <= 0 ? 1.0 : 1.0 - s.tentCooldown / MapData.TENT_RECHARGE, time, fx);
+            drawEntities(g, s);
+        }
         for (double[] b : s.bullets) if (!hidden.contains(b)) drawBullet(g, b[0], b[1], bulletAngle(b), teamOf(b));
         for (double[] gh : ghosts) drawBullet(g, gh[7], gh[8], Math.atan2(gh[3], gh[2]), (int) gh[4]);
         for (Particle p : parts) {
@@ -668,7 +827,7 @@ public class GamePanel extends JPanel {
                 g.fill(p);
             }
         }
-        scenery.drawFront(g, camX, camY, fx);
+        if (!lobby) scenery.drawFront(g, camX, camY, fx);
         g.setTransform(base);
 
         // the edge shading (vignette) is baked into the cached backdrop: Scenery.buildBack
@@ -705,7 +864,14 @@ public class GamePanel extends JPanel {
         AffineTransform hudBase = g.getTransform();
         g.translate(shakeX, shakeY); // names ride with the shaking battlefield, the HUD does not
         drawNames(g, s);
+        drawBubbles(g);
         g.setTransform(hudBase);
+        if (s.phase == Snapshot.LOBBY) {
+            drawLobbyHud(g, s);
+            drawChatBox(g);
+            g.dispose();
+            return;
+        }
         boolean resultsUp = s.winner >= 0 && ((s.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0) || viewLeaderboardManual);
         if (!resultsUp) drawHud(g, s); // the results table covers the HUD's place
         if (showBoard && s.winner < 0) {
@@ -723,16 +889,124 @@ public class GamePanel extends JPanel {
             }
             g.setTransform(hudBase);
         }
+        if (s.winner < 0) drawChatBox(g);
         g.dispose();
     }
 
     private void drawNames(Graphics2D g, Snapshot s) {
         g.setFont(Type.ui(12.5f, true));
+        boolean lobby = s.phase == Snapshot.LOBBY;
+        Protocol.Lobby l = link.lobby();
         for (Snapshot.P p : s.players) {
             double[] xy = renderPos.get(p.id);
             if (xy == null || !p.alive) continue;
-            Art.namePlate(g, p.name, xy[0], xy[1] + 50, p.team == 0 ? new Color(255, 175, 165) : new Color(185, 230, 255));
+            Color c = p.team == 0 ? new Color(255, 175, 165) : new Color(185, 230, 255);
+            String label = p.name;
+            if (lobby) { // in the lobby the name also says who is ready and who is the host
+                Protocol.LobbyEntry e = entry(p.id);
+                if (l != null && l.hostId() == p.id) label = "HOST  " + label;
+                if (e != null && e.ready()) { label += "  READY"; c = new Color(130, 245, 150); }
+            }
+            Art.namePlate(g, label, xy[0], xy[1] + 50, c);
         }
+    }
+
+    /** Recent chat shown in a speech bubble above the speaker. */
+    private void drawBubbles(Graphics2D g) {
+        g.setFont(Type.ui(12f, true));
+        FontMetrics fm = g.getFontMetrics();
+        for (Map.Entry<Integer, Object[]> b : bubbles.entrySet()) {
+            double[] xy = renderPos.get(b.getKey());
+            if (xy == null) continue;
+            String text = (String) b.getValue()[0];
+            double w = fm.stringWidth(text) + 18, h = 24, x = xy[0] - w / 2, y = xy[1] - 96;
+            long left = (long) b.getValue()[1] - System.nanoTime();
+            float a = (float) Math.max(0, Math.min(1, left / 400_000_000.0)); // fades out in its last 0.4 s
+            Composite keep = g.getComposite();
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a));
+            Path2D.Double tail = new Path2D.Double();
+            tail.moveTo(xy[0] - 6, y + h - 1); tail.lineTo(xy[0] + 6, y + h - 1); tail.lineTo(xy[0], y + h + 8); tail.closePath();
+            g.setColor(new Color(245, 242, 255, 235));
+            g.fill(new RoundRectangle2D.Double(x, y, w, h, 12, 12));
+            g.fill(tail);
+            g.setColor(new Color(60, 50, 100));
+            g.draw(new RoundRectangle2D.Double(x, y, w, h, 12, 12));
+            Art.text(g, text, x + 9, y + 16.5, new Color(30, 24, 50));
+            g.setComposite(keep);
+        }
+    }
+
+    /** The chat line being typed (ENTER opens it, ENTER sends, ESC cancels). */
+    private void drawChatBox(Graphics2D g) {
+        if (!typing) return;
+        double x = vX0() + 14, y = vY0() + vH() - 34, w = Math.min(520, vW() - 28);
+        Art.plate(g, x, y, w, 26, 6, new Color(170, 150, 235), time, fx);
+        g.setFont(Type.ui(12.5f, true));
+        String caret = ((int) (time * 2.5) & 1) == 0 ? "_" : " ";
+        Art.text(g, "SAY: " + chatText + caret, x + 10, y + 17.5, Color.WHITE);
+    }
+
+    /** Lobby screen furniture: room labels, who you are, ready and start buttons, countdown and controls. */
+    private void drawLobbyHud(Graphics2D g, Snapshot s) {
+        Protocol.Lobby l = link.lobby();
+        room.drawLabels(g, l, nearLaptop(), s.countdown, time);
+        final double x0 = vX0(), y0 = vY0(), w = vW(), h = vH(), cx = x0 + w / 2;
+        Snapshot.P me = find(s, myId);
+        int mt = me == null ? 0 : me.team;
+
+        Art.plate(g, x0 + 14, y0 + 14, 210, 46, 9, TEAM[mt], time, fx);
+        g.setFont(Art.title(15));
+        Art.text(g, "LOBBY  -  YOU ARE " + TEAM_NAME[mt], x0 + 28, y0 + 33, TEAM[mt].brighter());
+        g.setFont(Type.ui(11.5f, true));
+        int ping = link.pingMs();
+        Art.text(g, "PING " + ping + "ms" + (link.lagSimOn() ? " LAG" : "") + (amHost() ? "   YOU ARE THE HOST" : ""),
+            x0 + 28, y0 + 50, ping > 150 ? Color.ORANGE : new Color(170, 175, 195));
+
+        double bw = 200, bh = 48, bx = x0 + w - bw - 18, by = y0 + h - bh - 18;
+        boolean ready = amReady();
+        readyBtn.setRect(bx, by, bw, bh);
+        Color rc = ready ? new Color(110, 230, 130) : GOLD;
+        lobbyButton(g, readyBtn, rc, hoverReady, ready ? "READY!" : "I'M READY", ready ? "click or R to cancel" : "click or press R");
+        if (amHost()) {
+            startBtn.setRect(bx - bw - 12, by, bw, bh);
+            boolean ok = lobbyCanStart() && s.countdown <= 0;
+            lobbyButton(g, startBtn, ok ? new Color(255, 120, 70) : new Color(110, 105, 135), hoverStart && ok,
+                s.countdown > 0 ? "STARTING..." : "START MATCH", ok ? "everyone is ready" : s.countdown > 0 ? "get ready" : "full teams, all ready");
+        } else startBtn.setRect(0, 0, 0, 0);
+        drawModePicker(g, bx - bw - 12, by - 50, bw * 2 + 12);
+
+        if (s.countdown > 0) { // big centre countdown, each number popping in
+            int n = (int) Math.ceil(s.countdown);
+            double frac = s.countdown - Math.floor(s.countdown), k = 1 + 0.35 * frac;
+            g.setFont(Art.title(22));
+            Art.textCenter(g, "MATCH STARTS IN", x0, w, y0 + h * 0.30, Color.WHITE);
+            AffineTransform keep = g.getTransform();
+            g.translate(cx, y0 + h * 0.30 + 125);
+            g.scale(k, k);
+            g.setFont(Type.numbers(96));
+            if (fx) Art.glow(g, GOLD, 0, -34, 90, (float) (0.6 * frac));
+            Art.textCenter(g, String.valueOf(n), -100, 200, 0, GOLD);
+            g.setTransform(keep);
+        }
+
+        drawFeed(g, x0, y0, h);
+        if (!typing) {
+            g.setFont(Type.ui(11.5f, false));
+            Art.textCenter(g, "WASD move   MOUSE shoot the targets   ENTER chat   R ready   E / C at the wardrobe   F11 fullscreen",
+                x0, w - bw * 2 - 30, y0 + h - 10, new Color(235, 232, 255, 200));
+        }
+    }
+
+    private void lobbyButton(Graphics2D g, Rectangle2D.Double r, Color c, boolean hover, String label, String hint) {
+        Art.plate(g, r.x, r.y, r.width, r.height, 10, hover ? c.brighter() : c, time, fx);
+        if (hover) {
+            g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 50));
+            g.fill(Art.chamfer(r.x, r.y, r.width, r.height, 10));
+        }
+        g.setFont(Art.title(17));
+        Art.textCenter(g, label, r.x, r.width, r.y + 23, Color.WHITE);
+        g.setFont(Type.ui(10.5f, true));
+        Art.textCenter(g, hint, r.x, r.width, r.y + 39, new Color(200, 196, 225));
     }
 
     /** Team light pools, rune rings and crystals at each home base. */
@@ -778,10 +1052,6 @@ public class GamePanel extends JPanel {
     private void drawEntities(Graphics2D g, Snapshot s) {
         for (int t = 0; t < 2; t++) Art.pedestal(g, MapData.BASES[t][0], MapData.BASES[t][1], t);
 
-        List<Snapshot.P> order = new ArrayList<>(Arrays.asList(s.players)); // lower on screen draws on top
-        order.removeIf(p -> renderPos.get(p.id) == null);
-        order.sort(Comparator.comparingDouble(p -> renderPos.get(p.id)[1]));
-
         for (int t = 0; t < 2; t++) { // flags in the world, from the authoritative flag state
             Snapshot.F f = s.flags[t];
             if (f.state == Snapshot.BASE) Art.flag(g, MapData.BASES[t][0], MapData.BASES[t][1], t, time);
@@ -793,7 +1063,7 @@ public class GamePanel extends JPanel {
                 Art.flag(g, f.x, f.y, t, time);
             }
         }
-        for (Snapshot.P p : order) drawPlayer(g, p, renderPos.get(p.id), p.id == myId);
+        drawPlayers(g, s);
         for (int t = 0; t < 2; t++) { // carried flags ride above the carrier's head
             Snapshot.F f = s.flags[t];
             double[] xy = f.state == Snapshot.CARRIED ? renderPos.get(f.carrier) : null;
@@ -801,6 +1071,13 @@ public class GamePanel extends JPanel {
             if (fx) Art.glow(g, Art.FX[t], xy[0] + 8, xy[1] - 58, 42, 0.5f);
             Art.flag(g, xy[0] + 5, xy[1] - 58, t, time);
         }
+    }
+
+    private void drawPlayers(Graphics2D g, Snapshot s) {
+        List<Snapshot.P> order = new ArrayList<>(Arrays.asList(s.players)); // lower on screen draws on top
+        order.removeIf(p -> renderPos.get(p.id) == null);
+        order.sort(Comparator.comparingDouble(p -> renderPos.get(p.id)[1]));
+        for (Snapshot.P p : order) drawPlayer(g, p, renderPos.get(p.id), p.id == myId);
     }
 
     /**
@@ -846,6 +1123,8 @@ public class GamePanel extends JPanel {
         double cy0 = py - 5 + bob, y0 = cy0 - SH / 2;
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
         pixelArt(g, Art.spriteCrisp(p.team, frame, spriteK(g)), px, cy0, left);
+        Protocol.LobbyEntry look = entry(p.id);   // the hat chosen at the lobby laptop, worn in the match too
+        if (look != null) LobbyRoom.hat(g, look.hat(), look.hatColor(), px, y0 + 6);
         g.setComposite(keep);
 
         // Body energy cycle / magical invulnerability ring
@@ -991,10 +1270,16 @@ public class GamePanel extends JPanel {
 
         // bottom left: compact controls guide
         g.setFont(Type.ui(11.5f, false));
-        Art.textCenter(g, "WASD move   MOUSE aim/fire   TAB scores   F11 fullscreen   F fx " + (fx ? "on" : "off") + "   V shake " + (shakeOn ? "on" : "off") + "   L lag",
+        if (!typing) Art.textCenter(g, "WASD move   MOUSE aim/fire   TAB scores   ENTER chat   F11 fullscreen   F fx " + (fx ? "on" : "off") + "   V shake " + (shakeOn ? "on" : "off") + "   L lag",
             x0, w, y0 + h - 10, new Color(235, 232, 255, 200));
 
-        // event feed
+        drawFeed(g, x0, y0, h);
+        drawNotices(g, cx, top, PH);
+        drawStatusBanner(g, s, me, mt, cx, y0, h);
+    }
+
+    /** Event feed, bottom left: joins, eliminations, flags and chat. */
+    private void drawFeed(Graphics2D g, double x0, double y0, double h) {
         g.setFont(Type.ui(12.5f, true));
         int n = feed.size();
         for (int i = 0; i < n; i++) {
@@ -1012,8 +1297,10 @@ public class GamePanel extends JPanel {
             g.draw(pl);
             Art.text(g, t, (int) x0 + 24, (int) fy + 15, Color.WHITE);
         }
+    }
 
-        // big announcements: slide in under the timer, fade out
+    /** Big announcements: slide in under the timer, fade out. */
+    private void drawNotices(Graphics2D g, double cx, double top, double PH) {
         for (int i = 0; i < notices.size(); i++) {
             Object[] nt = notices.get(i);
             double age = (Double) nt[2];
@@ -1035,8 +1322,10 @@ public class GamePanel extends JPanel {
             Art.textCenter(g, (String) nt[0], (int) (cx - bw / 2), (int) bw, (int) ny, c.brighter());
             g.setComposite(keep);
         }
+    }
 
-        // bottom centre: personal status
+    /** Bottom centre: personal status (carrying the flag, eliminated). */
+    private void drawStatusBanner(Graphics2D g, Snapshot s, Snapshot.P me, int mt, double cx, double y0, double h) {
         String banner = null;
         for (Snapshot.F f : s.flags) if (f.state == Snapshot.CARRIED && f.carrier == myId) banner = "YOU HAVE THE FLAG - RUN HOME";
         if (me != null && !me.alive) banner = "ELIMINATED - RESPAWNING";
@@ -1400,7 +1689,7 @@ public class GamePanel extends JPanel {
         g.setStroke(new BasicStroke(hoverLeaderboardPlayAgain ? 2.0f : 1.2f));
         g.drawRoundRect(btn1X, btnY, btnW, btnH, 16, 16);
         g.setFont(Type.ui(13, true));
-        Art.textCenter(g, "PLAY AGAIN", btn1X, btnW, btnY + 22, Color.WHITE);
+        Art.textCenter(g, "BACK TO LOBBY", btn1X, btnW, btnY + 22, Color.WHITE);
 
         // Button 2: View Celebration
         Color b2Fill = hoverLeaderboardBack ? new Color(255, 255, 255, 45) : new Color(255, 255, 255, 18);

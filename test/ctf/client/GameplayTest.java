@@ -44,6 +44,7 @@ public class GameplayTest {
         runTest("Match Reset Cleanly Clears All Match Statistics", GameplayTest::testMatchResetStatistics);
         runTest("Typography Fonts Resolve & Pixel-Art Sprites Scale By Whole Pixels", GameplayTest::testTypographyAndSprites);
         runTest("Wide/Tall Windows Are Filled With Scenery (No Black Bars)", GameplayTest::testViewFillsWindow);
+        runTest("Lobby Room Draws, Ready Button Clicks, ENTER Chat Sends", GameplayTest::testLobbyRoom);
 
         System.out.println("\n=== Test Results Summary ===");
         System.out.println("Passed: " + passed + " | Failed: " + failed);
@@ -469,6 +470,69 @@ public class GameplayTest {
     }
 
     /** The panel's own timer mutates particle lists on the Swing thread, so painting must happen there too, as in the real game. */
+    static void testLobbyRoom() {
+        java.util.List<String> sent = new java.util.ArrayList<>();
+        ctf.common.Protocol.Lobby lobby = new ctf.common.Protocol.Lobby("LOBBY", 2, 0, 1, java.util.List.of(
+            new ctf.common.Protocol.LobbyEntry(0, 0, false, 2, 1, 0, "You"),
+            new ctf.common.Protocol.LobbyEntry(1, 1, true, 4, 3, 5, "Ann")));
+        NetLink link = new NetLink() {
+            @Override public void sendInput(int dx, int dy, double aim, boolean shoot) { if (shoot) sent.add("shoot"); }
+            @Override public int pingMs() { return 20; }
+            @Override public void requestPlayAgain() {}
+            @Override public void sendReady(boolean ready) { sent.add("ready " + ready); }
+            @Override public void sendChat(String text) { sent.add("chat " + text); }
+            @Override public void sendBegin() { sent.add("begin"); }
+            @Override public ctf.common.Protocol.Lobby lobby() { return lobby; }
+        };
+        GamePanel panel = new GamePanel(link, 0);
+        panel.setSize(MapData.W, MapData.H);
+        Snapshot s = new Snapshot();
+        s.phase = Snapshot.LOBBY;
+        Snapshot.P p0 = new Snapshot.P(); p0.id = 0; p0.name = "You"; p0.team = 0; p0.x = 560; p0.y = 300;
+        Snapshot.P p1 = new Snapshot.P(); p1.id = 1; p1.name = "Ann"; p1.team = 1; p1.x = 650; p1.y = 330;
+        s.players = new Snapshot.P[]{p0, p1};
+        panel.onSnapshot(s);
+        panel.onChat(1, "Ann: hello");
+
+        BufferedImage img = new BufferedImage(MapData.W, MapData.H, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = img.createGraphics();
+        paintOnEdt(panel, g);   // the first paint lays out the buttons
+        g.dispose();
+        assertTrue(img.getRGB((int) ctf.common.LobbyMap.PADS[0][0], 315) != 0, "the lobby room is drawn");
+
+        // the ready button sits bottom-right; a click there must toggle ready and not fire
+        int bx = MapData.W - 18 - 100, by = MapData.H - 18 - 24;
+        onEdt(() -> {
+            for (java.awt.event.MouseListener l : panel.getMouseListeners())
+                l.mousePressed(new java.awt.event.MouseEvent(panel, java.awt.event.MouseEvent.MOUSE_PRESSED, 0, 0, bx, by, 1, false, java.awt.event.MouseEvent.BUTTON1));
+        });
+        assertTrue(sent.contains("ready true"), "clicking the ready button sends READY (" + sent + ")");
+        assertTrue(!sent.contains("shoot"), "the click does not also fire a shot");
+
+        onEdt(() -> {   // ENTER opens chat, typed letters go into it, ENTER sends
+            for (int code : new int[]{java.awt.event.KeyEvent.VK_ENTER, java.awt.event.KeyEvent.VK_H, java.awt.event.KeyEvent.VK_I, java.awt.event.KeyEvent.VK_ENTER}) {
+                char ch = code == java.awt.event.KeyEvent.VK_H ? 'h' : code == java.awt.event.KeyEvent.VK_I ? 'i' : '\n';
+                for (java.awt.event.KeyListener l : panel.getKeyListeners())
+                    l.keyPressed(new java.awt.event.KeyEvent(panel, java.awt.event.KeyEvent.KEY_PRESSED, 0, 0, code, ch));
+            }
+        });
+        assertTrue(sent.contains("chat hi"), "ENTER, typing and ENTER sends the chat line (" + sent + ")");
+
+        Snapshot s2 = Demo.copy(s);   // the match starting: the arena is drawn again
+        s2.phase = Snapshot.PLAYING;
+        s2.tick = 2;
+        panel.onSnapshot(s2);
+        g = img.createGraphics();
+        paintOnEdt(panel, g);
+        g.dispose();
+        assertTrue(true, "switching from the lobby to the match paints without errors");
+    }
+
+    static void onEdt(Runnable r) {
+        try { javax.swing.SwingUtilities.invokeAndWait(r); }
+        catch (Exception e) { throw new RuntimeException(e); }
+    }
+
     static void paintOnEdt(GamePanel panel, Graphics2D g) {
         try { javax.swing.SwingUtilities.invokeAndWait(() -> panel.paint(g)); }
         catch (Exception e) { throw new RuntimeException(e); }
