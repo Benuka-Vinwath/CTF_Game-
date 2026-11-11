@@ -192,7 +192,8 @@ final class LobbyRoom {
     // ------------------------------------------------------------------ text (overlay)
 
     /** Pad names with team counts, the status board, the practice range and the laptop hint. */
-    void drawLabels(Graphics2D g, Protocol.Lobby lobby, boolean nearLaptop, double countdown, double time) {
+    /** lastMatch: "LAST MATCH: RED WON 3 - 1 · MVP X" after a match, else null. */
+    void drawLabels(Graphics2D g, Protocol.Lobby lobby, boolean nearLaptop, double countdown, String lastMatch, double time) {
         int[] count = new int[2];
         int ready = 0, total = 0, best = 0;
         String bestName = null, host = "?";
@@ -223,9 +224,10 @@ final class LobbyRoom {
             bx, bwid, bw[1] + 28, new Color(225, 225, 255));
         Art.textCenter(g, "READY " + ready + "/" + total + (full ? "" : "     teams not full yet"),
             bx, bwid, bw[1] + 46, ready == total && full ? new Color(120, 240, 140) : new Color(200, 195, 230));
+        boolean waiting = ready == total && full;
         String status = countdown > 0 ? "MATCH STARTS IN " + (int) Math.ceil(countdown)
-            : ready == total && full ? "Waiting for host " + host + " to start" : "Host: " + host;
-        Art.textCenter(g, status, bx, bwid, bw[1] + 64, countdown > 0 ? new Color(255, 205, 90) : new Color(170, 165, 210));
+            : waiting ? "Waiting for host " + host + " to start" : lastMatch != null ? lastMatch : "Host: " + host;
+        Art.textCenter(g, status, bx, bwid, bw[1] + 64, countdown > 0 || (!waiting && lastMatch != null) ? new Color(255, 205, 90) : new Color(170, 165, 210));
 
         g.setFont(Type.ui(11.5f, true));
         Art.textCenter(g, "PRACTICE RANGE" + (bestName != null ? "   best: " + bestName + " " + best : ""),

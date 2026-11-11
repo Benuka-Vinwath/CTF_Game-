@@ -19,7 +19,7 @@ import java.util.concurrent.LinkedBlockingQueue;
  * takes lines from an outbox queue and writes them to the socket, so game logic never waits on a
  * slow client's network. A client that stops reading entirely (queue over MAX_QUEUE) is dropped.
  *
- * Commands (client to server): HELLO team name [hat colour], MODE n (host: n players per team), READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text,
+ * Commands (client to server): HELLO team name [hat colour level title], MODE n (host: n players per team), READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text,
  * BEGIN (host starts the countdown), LOOK hat colour, AGAIN (back to the lobby after a match), BYE
  */
 public class ClientHandler implements Runnable, Conn {
@@ -72,10 +72,11 @@ public class ClientHandler implements Runnable, Conn {
 
         if (player == null) {
             if (!cmd.equals("HELLO")) { send("ERROR send HELLO <team> <name> first"); return true; }
-            String[] a = arg.split(" ");   // HELLO team name [hat colour]; cleanName keeps the name free of spaces
+            String[] a = arg.split(" ");   // HELLO team name [hat colour level title]; cleanName keeps the name free of spaces
             int team = parseInt(a[0], -1);
             String name = Protocol.cleanName(a.length > 1 ? a[1] : "");
-            player = game.addPlayer(name, team, a.length > 2 ? parseInt(a[2], 0) : 0, a.length > 3 ? parseInt(a[3], 0) : 0, this);
+            player = game.addPlayer(name, team, a.length > 2 ? parseInt(a[2], 0) : 0, a.length > 3 ? parseInt(a[3], 0) : 0,
+                    a.length > 4 ? parseInt(a[4], 1) : 1, a.length > 5 ? parseInt(a[5], 0) : 0, this);
             if (player == null) { send("ERROR server full"); return false; }
             System.out.println("[tcp] " + name + " connected from " + socket.getRemoteSocketAddress());
             return true;

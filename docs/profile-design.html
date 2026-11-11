@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The ThroneFall - profile design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --gold: #ffcd5a; --gold-hi: #fff1c4; --gold-lo: #b9822a; --gold-dk: #5e3d0c;
+    --violet: #aa96eb; --stone: #6e5fa0; --red: #eb4646; --blue: #4696ff; --blue-fx: #3cc8ff; --green: #6ee682;
+    --text: #f4f0ff; --soft: #c8c4e1; --muted: #8f8aa8;
+    --title: "Cinzel Decorative", "Palatino Linotype", serif;
+    --display: "Cinzel", "Palatino Linotype", serif;
+    --ui: "Rajdhani", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #04030a; color: var(--text); font-family: "Segoe UI", sans-serif; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 36px 18px 80px; }
+  .page > h1 { font-family: var(--display); font-weight: 900; letter-spacing: .1em; margin: 0; font-size: 28px;
+    background: linear-gradient(180deg, var(--gold-hi), var(--gold) 45%, var(--gold-lo)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { color: var(--soft); font-size: 14.5px; line-height: 1.6; margin: 8px 0 0; max-width: 880px; }
+  .sec { display: flex; align-items: baseline; gap: 14px; margin: 46px 0 12px; }
+  .sec b { font-family: var(--display); font-weight: 900; font-size: 13px; letter-spacing: .2em; color: var(--gold); border: 1px solid rgba(255,205,90,.45); padding: 5px 10px; }
+  .sec span { font-family: var(--display); font-weight: 700; letter-spacing: .14em; color: var(--violet); font-size: 15px; }
+  .note { color: var(--soft); font-size: 13.5px; line-height: 1.65; margin: 12px 0 0; max-width: 1000px; }
+  .note em { color: var(--gold); font-style: normal; }
+
+  .screen { position: relative; aspect-ratio: 16 / 9; width: 100%; overflow: hidden; border-radius: 6px; container-type: inline-size;
+    box-shadow: 0 0 0 1px #221a38, 0 30px 80px rgba(0,0,0,.6);
+    background: radial-gradient(ellipse 80% 80% at 50% 45%, transparent 45%, rgba(2,1,6,.85) 100%),
+      repeating-linear-gradient(0deg, transparent 0 2.4cqw, rgba(0,0,0,.4) 2.4cqw calc(2.4cqw + 2px)),
+      repeating-linear-gradient(90deg, transparent 0 5cqw, rgba(0,0,0,.3) 5cqw calc(5cqw + 2px)),
+      linear-gradient(180deg, #120c22 0%, #0b0716 60%, #06040c 100%); }
+  .crumbs { position: absolute; left: 6.2cqw; top: 3cqw; font-family: var(--ui); font-weight: 700; font-size: 1.1cqw; letter-spacing: .3em; color: var(--muted); }
+  .crumbs b { color: var(--gold); }
+  .ptitle { position: absolute; left: 6.2cqw; top: 4.6cqw; margin: 0; font-family: var(--title); font-weight: 900; font-size: 3.6cqw;
+    background: linear-gradient(180deg, var(--gold-hi), var(--gold) 50%, var(--gold-lo)); -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 .2cqw 0 var(--gold-dk)); }
+  .panel { position: absolute; background: linear-gradient(180deg, rgba(20,14,40,.82), rgba(8,5,18,.92)); border: 1px solid rgba(255,205,90,.28);
+    clip-path: polygon(1.6cqw 0, 100% 0, 100% calc(100% - 1.6cqw), calc(100% - 1.6cqw) 100%, 0 100%, 0 1.6cqw); }
+  .cap { font-family: var(--ui); font-weight: 700; font-size: .95cqw; letter-spacing: .3em; color: var(--violet); }
+
+  /* left: the knight and what you can edit */
+  .left { left: 6.2cqw; top: 11cqw; width: 25cqw; bottom: 4cqw; padding: 1.6cqw 1.6cqw; display: flex; flex-direction: column; align-items: center; }
+  .stage { position: relative; width: 100%; height: 15cqw; display: grid; place-items: center; }
+  .stage::before { content: ""; position: absolute; bottom: 1cqw; width: 60%; height: 2cqw; border-radius: 50%; background: radial-gradient(ellipse, rgba(255,205,90,.45), transparent 70%); }
+  .stage svg { position: relative; height: 12cqw; animation: bob 3s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-.4cqw); } }
+  .namebox { width: 100%; margin-top: .6cqw; padding: .6cqw; text-align: center; border: 1px solid var(--gold); background: rgba(0,0,0,.45);
+    font-family: var(--display); font-weight: 900; font-size: 1.7cqw; letter-spacing: .12em; }
+  .namebox i { display: inline-block; width: 2px; height: 1.4cqw; background: var(--gold); vertical-align: -.15cqw; margin-left: .2cqw; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .titleline { margin-top: .4cqw; font-family: var(--ui); font-weight: 700; font-size: 1.1cqw; letter-spacing: .14em; color: var(--gold-hi); }
+  .pick { width: 100%; display: flex; align-items: center; justify-content: space-between; margin-top: .7cqw; font-family: var(--display); font-weight: 900; font-size: 1.15cqw; letter-spacing: .12em; }
+  .pick .l { font-family: var(--ui); font-size: .9cqw; letter-spacing: .25em; color: var(--muted); width: 5.4cqw; }
+  .pick .v { flex: 1; text-align: center; }
+  .arr { width: 2.1cqw; height: 2.1cqw; display: grid; place-items: center; border: 1px solid rgba(255,205,90,.5); color: var(--gold); font-size: 1.1cqw; }
+  .swatches { display: flex; gap: .4cqw; flex: 1; justify-content: center; }
+  .swatches span { width: 1.5cqw; height: 1.5cqw; border-radius: 50%; border: 1px solid rgba(255,255,255,.2); }
+  .swatches span.on { outline: 2px solid #fff; outline-offset: 2px; }
+  .save { margin-top: auto; align-self: stretch; text-align: center; font-family: var(--display); font-weight: 900; font-size: 1.3cqw; letter-spacing: .25em; padding: .8cqw;
+    color: #1a0f02; background: linear-gradient(180deg, var(--gold-hi), var(--gold) 50%, var(--gold-lo)); clip-path: polygon(.8cqw 0, 100% 0, calc(100% - .8cqw) 100%, 0 100%); }
+
+  /* right: level, stats, history, achievements */
+  .lvl { left: 33cqw; top: 11cqw; right: 6.2cqw; height: 7.4cqw; padding: 1.1cqw 1.8cqw; display: flex; align-items: center; gap: 1.8cqw; }
+  .badge { position: relative; width: 5.4cqw; height: 5.4cqw; flex: none; display: grid; place-items: center; }
+  .badge svg { position: absolute; inset: 0; }
+  .badge b { position: relative; font-family: var(--ui); font-weight: 700; font-size: 2.2cqw; color: #1a0f02; }
+  .xp { flex: 1; }
+  .xp .top { display: flex; justify-content: space-between; font-family: var(--ui); font-weight: 700; font-size: 1.15cqw; letter-spacing: .1em; color: var(--soft); }
+  .xp .top b { font-family: var(--display); font-weight: 900; color: #fff; font-size: 1.5cqw; letter-spacing: .1em; }
+  .bar { margin-top: .6cqw; height: 1cqw; background: rgba(255,255,255,.08); border: 1px solid rgba(255,205,90,.3); position: relative; overflow: hidden; }
+  .bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 68%; background: linear-gradient(90deg, var(--gold-lo), var(--gold), var(--gold-hi)); box-shadow: 0 0 1cqw rgba(255,205,90,.6); animation: fill 2.4s ease-out; }
+  .bar i::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 40%, rgba(255,255,255,.7) 50%, transparent 60%); background-size: 300% 100%; animation: shine 3s linear infinite; }
+  @keyframes fill { from { width: 0; } }
+  @keyframes shine { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+  .xp .next { margin-top: .4cqw; font-family: var(--ui); font-weight: 600; font-size: 1cqw; color: var(--muted); }
+
+  .tiles { position: absolute; left: 33cqw; top: 19.6cqw; right: 6.2cqw; display: grid; grid-template-columns: repeat(7, 1fr); gap: .8cqw; }
+  .tile { padding: .9cqw .6cqw; text-align: center; background: rgba(20,14,40,.75); border: 1px solid rgba(170,150,235,.3); }
+  .tile .n { font-family: var(--ui); font-weight: 700; font-size: 2.2cqw; color: #fff; line-height: 1; }
+  .tile .k { margin-top: .35cqw; font-family: var(--ui); font-weight: 700; font-size: .85cqw; letter-spacing: .2em; color: var(--muted); }
+  .tile.g .n { color: var(--gold); }
+
+  .hist { left: 33cqw; top: 26.6cqw; width: 33cqw; bottom: 4cqw; padding: 1.3cqw 1.5cqw; }
+  .row { display: grid; grid-template-columns: 4.4cqw 1fr 3.4cqw 6.4cqw; align-items: center; gap: .6cqw; padding: .55cqw 0; border-bottom: 1px solid rgba(110,95,160,.3);
+    font-family: var(--ui); font-weight: 600; font-size: 1.1cqw; color: var(--soft); }
+  .res { font-weight: 700; font-size: .9cqw; letter-spacing: .14em; text-align: center; padding: .15cqw 0; }
+  .res.w { color: var(--green); border: 1px solid rgba(110,230,130,.5); background: rgba(110,230,130,.1); }
+  .res.l { color: #ff9b8c; border: 1px solid rgba(255,155,140,.45); background: rgba(235,70,70,.1); }
+  .row .sc { color: #fff; font-weight: 700; }
+  .row .cs { text-align: right; color: var(--muted); font-size: 1cqw; letter-spacing: .08em; }
+  .row .mvp { color: var(--gold); font-size: .85cqw; letter-spacing: .15em; margin-left: .4cqw; }
+
+  .ach { left: 67.6cqw; top: 26.6cqw; right: 6.2cqw; bottom: 4cqw; padding: 1.3cqw 1.5cqw; }
+  .medals { display: grid; grid-template-columns: repeat(3, 1fr); gap: .6cqw; margin-top: .7cqw; }
+  .medal { text-align: center; padding: .4cqw .3cqw; border: 1px solid rgba(255,205,90,.3); background: rgba(255,205,90,.06); }
+  .medal svg { width: 2.1cqw; height: 2.1cqw; }
+  .medal .t { font-family: var(--ui); font-weight: 700; font-size: .85cqw; letter-spacing: .1em; color: #fff; margin-top: .2cqw; }
+  .medal .u { font-family: var(--ui); font-weight: 600; font-size: .78cqw; color: var(--gold-hi); }
+  .medal.locked { filter: grayscale(1); opacity: .38; border-color: rgba(170,150,235,.25); background: transparent; }
+  .medal.locked .u { color: var(--muted); }
+  .reset { margin-top: .9cqw; font-family: var(--ui); font-weight: 700; font-size: .95cqw; letter-spacing: .2em; color: #ff9b8c; text-align: right; }
+  .back { position: absolute; left: 6.2cqw; bottom: 1.3cqw; font-family: var(--ui); font-weight: 700; font-size: 1cqw; letter-spacing: .25em; color: var(--soft); }
+  .k { display: inline-block; padding: 0 .5cqw; border: 1px solid rgba(170,150,235,.55); border-bottom-width: 2px; border-radius: .3cqw; font-size: .9cqw; margin-left: .6cqw; }
+
+  /* small pieces */
+  .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 820px) { .duo { grid-template-columns: 1fr; } }
+  .mini { position: relative; border: 1px solid #221a38; background: #0c0918; padding: 18px; min-height: 230px; overflow: hidden; container-type: inline-size; }
+  .menuitems { font-family: var(--display); font-weight: 900; letter-spacing: .14em; font-size: 20px; color: rgba(200,196,225,.62); line-height: 2.05; }
+  .menuitems span { font-family: var(--display); font-weight: 700; font-size: 12px; color: var(--stone); display: inline-block; width: 34px; }
+  .menuitems .on { color: #fff; text-shadow: 0 0 14px rgba(255,205,90,.55); background: linear-gradient(90deg, rgba(255,205,90,.18), transparent); border-left: 3px solid var(--gold); padding-left: 10px; }
+  .menuitems .on span { color: var(--gold); }
+  .menuitems small { display: block; font-family: var(--ui); font-weight: 600; font-size: 13px; color: var(--muted); letter-spacing: .06em; line-height: 1.2; margin: -6px 0 6px 34px; }
+  .floor { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent 0 34px, rgba(0,0,0,.25) 34px 36px), repeating-linear-gradient(90deg, transparent 0 34px, rgba(0,0,0,.25) 34px 36px), linear-gradient(#2d2640, #231d34); }
+  .kn { position: absolute; text-align: center; }
+  .kn svg { height: 74px; }
+  .tag { margin-top: 2px; font-family: var(--ui); font-weight: 700; font-size: 13px; color: #ffd0c6; background: rgba(4,4,14,.75); padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
+  .tag .lv { color: var(--gold); margin-right: 4px; }
+  .tag .tt { display: block; font-size: 10.5px; color: var(--violet); letter-spacing: .12em; }
+
+  /* database picture */
+  .db { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 4px; }
+  @media (max-width: 900px) { .db { grid-template-columns: 1fr 1fr; } }
+  .tbl { border: 1px solid rgba(255,205,90,.35); background: #0c0918; font-family: Consolas, monospace; font-size: 12.5px; }
+  .tbl h4 { margin: 0; padding: 8px 10px; font-family: var(--display); font-weight: 900; letter-spacing: .12em; font-size: 13px; color: #1a0f02;
+    background: linear-gradient(180deg, var(--gold-hi), var(--gold) 50%, var(--gold-lo)); }
+  .tbl div { padding: 4px 10px; border-top: 1px solid #1d1630; color: var(--soft); display: flex; justify-content: space-between; gap: 8px; }
+  .tbl div i { color: var(--muted); font-style: normal; }
+  .tbl div.k1 { color: var(--gold-hi); }
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; font-size: 13px; color: var(--soft); }
+  .flow b { border: 1px solid var(--stone); padding: 7px 11px; background: #0c0918; color: #fff; font-weight: 600; }
+  .flow b.g { border-color: var(--gold); color: var(--gold); }
+  .flow i { color: var(--muted); font-style: normal; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>THE THRONEFALL · PLAYER PROFILE</h1>
+  <p class="lead">A Profile page in the Throne room style. You edit who you are on the left; the game fills in everything on the right from a small database on your computer, updated after every match. All names and numbers below are examples.</p>
+
+  <div class="sec"><b>1</b><span>Profile screen</span></div>
+  <div class="screen">
+    <div class="crumbs">MAIN MENU &nbsp;/&nbsp; <b>PROFILE</b></div>
+    <h2 class="ptitle">Your legend</h2>
+
+    <div class="panel left">
+      <div class="cap">YOUR KNIGHT</div>
+      <div class="stage">
+        <svg viewBox="0 0 18 26" shape-rendering="crispEdges">
+          <rect x="5" y="1" width="8" height="2" fill="#ffcd5a"/><rect x="5" y="0" width="2" height="2" fill="#ffcd5a"/><rect x="8" y="-1" width="2" height="3" fill="#ffcd5a"/><rect x="11" y="0" width="2" height="2" fill="#ffcd5a"/>
+          <rect x="5" y="3" width="8" height="6" fill="#c8c4e1"/><rect x="6" y="6" width="6" height="2" fill="#1a1428"/>
+          <rect x="3" y="9" width="12" height="8" fill="#eb4646"/><rect x="7" y="10" width="4" height="5" fill="#ffcd5a"/>
+          <rect x="5" y="17" width="3" height="7" fill="#5a4f78"/><rect x="10" y="17" width="3" height="7" fill="#5a4f78"/>
+          <rect x="4" y="24" width="4" height="2" fill="#2c2540"/><rect x="10" y="24" width="4" height="2" fill="#2c2540"/>
+        </svg>
+      </div>
+      <div class="namebox">RAVEN<i></i></div>
+      <div class="titleline">THRONE KEEPER</div>
+      <div class="pick"><span class="l">HAT</span><span class="arr">&lsaquo;</span><span class="v">CROWN</span><span class="arr">&rsaquo;</span></div>
+      <div class="pick"><span class="l">COLOUR</span><span class="swatches"><span class="on" style="background:#ffcd5a"></span><span style="background:#f0f0fa"></span><span style="background:#ff78be"></span><span style="background:#6ee678"></span><span style="background:#af6eff"></span><span style="background:#5ae1eb"></span></span></div>
+      <div class="pick"><span class="l">TITLE</span><span class="arr">&lsaquo;</span><span class="v" style="font-size:1cqw">THRONE KEEPER</span><span class="arr">&rsaquo;</span></div>
+      <div class="pick"><span class="l">TEAM</span><span class="v" style="display:flex;gap:.6cqw;justify-content:center"><span style="color:#ff9b8c;border:1px solid #ff9b8c;padding:.1cqw .7cqw;font-size:1cqw">RED</span><span style="color:var(--muted);border:1px solid rgba(170,150,235,.35);padding:.1cqw .7cqw;font-size:1cqw">BLUE</span><span style="color:var(--muted);border:1px solid rgba(170,150,235,.35);padding:.1cqw .7cqw;font-size:1cqw">ANY</span></span></div>
+      <div class="save">SAVE</div>
+    </div>
+
+    <div class="panel lvl">
+      <div class="badge">
+        <svg viewBox="0 0 60 60"><defs><linearGradient id="gb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff1c4"/><stop offset=".5" stop-color="#ffcd5a"/><stop offset="1" stop-color="#b9822a"/></linearGradient></defs>
+          <path d="M30 2 L55 16 L55 44 L30 58 L5 44 L5 16 Z" fill="url(#gb)" stroke="#5e3d0c" stroke-width="3"/></svg>
+        <b>7</b>
+      </div>
+      <div class="xp">
+        <div class="top"><b>LEVEL 7</b><span>680 / 1000 XP</span></div>
+        <div class="bar"><i></i></div>
+        <div class="next">320 XP to Level 8 &middot; unlocks the HORNS hat</div>
+      </div>
+    </div>
+
+    <div class="tiles">
+      <div class="tile"><div class="n">42</div><div class="k">MATCHES</div></div>
+      <div class="tile"><div class="n">27</div><div class="k">WINS</div></div>
+      <div class="tile g"><div class="n">64%</div><div class="k">WIN RATE</div></div>
+      <div class="tile"><div class="n">58</div><div class="k">CAPTURES</div></div>
+      <div class="tile"><div class="n">131</div><div class="k">TAGS</div></div>
+      <div class="tile"><div class="n">1.6</div><div class="k">K / D</div></div>
+      <div class="tile g"><div class="n">9</div><div class="k">MVP</div></div>
+    </div>
+
+    <div class="panel hist">
+      <div class="cap">RECENT MATCHES</div>
+      <div class="row"><span class="res w">WIN</span><span><span class="sc">RED 3 - 1</span> &nbsp;2v2<span class="mvp">MVP</span></span><span>4:12</span><span class="cs">C2 T3 D1</span></div>
+      <div class="row"><span class="res l">LOSS</span><span><span class="sc">BLUE 2 - 3</span> &nbsp;1v1</span><span>5:00</span><span class="cs">C2 T4 D5</span></div>
+      <div class="row"><span class="res w">WIN</span><span><span class="sc">RED 3 - 0</span> &nbsp;3v3</span><span>3:05</span><span class="cs">C1 T6 D0</span></div>
+      <div class="row"><span class="res w">WIN</span><span><span class="sc">BLUE 3 - 2</span> &nbsp;2v2<span class="mvp">MVP</span></span><span>4:47</span><span class="cs">C3 T2 D2</span></div>
+      <div class="row"><span class="res l">LOSS</span><span><span class="sc">RED 1 - 3</span> &nbsp;2v2</span><span>3:58</span><span class="cs">C1 T1 D4</span></div>
+    </div>
+
+    <div class="panel ach">
+      <div class="cap">ACHIEVEMENTS &nbsp;<span style="color:var(--gold)">5 / 9</span></div>
+      <div class="medals">
+        <div class="medal"><svg viewBox="-40 -50 80 64"><path d="M-32 0 L-36 -36 L-20 -22 L0 -46 L20 -22 L36 -36 L32 0 Z" fill="#ffcd5a" stroke="#5e3d0c" stroke-width="3"/></svg><div class="t">FIRST WIN</div><div class="u">title: Squire</div></div>
+        <div class="medal"><svg viewBox="0 0 40 40"><rect x="9" y="4" width="3" height="32" fill="#ddd"/><path d="M12 5 Q24 2 33 8 L27 14 L33 20 Q24 16 12 19 Z" fill="#eb4646"/></svg><div class="t">10 CAPTURES</div><div class="u">hat: Cap</div></div>
+        <div class="medal"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="14" fill="none" stroke="#3cc8ff" stroke-width="3"/><circle cx="20" cy="20" r="3" fill="#ff5a32"/></svg><div class="t">50 TAGS</div><div class="u">title: Marksman</div></div>
+        <div class="medal"><svg viewBox="0 0 40 40"><path d="M20 3 L25 15 L38 16 L28 25 L31 38 L20 31 L9 38 L12 25 L2 16 L15 15 Z" fill="#ffcd5a"/></svg><div class="t">5 &times; MVP</div><div class="u">title: Throne Keeper</div></div>
+        <div class="medal"><svg viewBox="0 0 40 40"><path d="M6 30 L14 12 L20 22 L26 8 L34 30 Z" fill="#6ee682"/></svg><div class="t">3-0 WIN</div><div class="u">hat: Halo</div></div>
+        <div class="medal locked"><svg viewBox="0 0 40 40"><path d="M20 4 C30 4 34 14 30 22 L20 36 L10 22 C6 14 10 4 20 4 Z" fill="#ff5a32"/></svg><div class="t">5 WIN STREAK</div><div class="u">hat: Horns</div></div>
+        <div class="medal locked"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="15" fill="#aa96eb"/></svg><div class="t">100 MATCHES</div><div class="u">title: Veteran</div></div>
+        <div class="medal locked"><svg viewBox="0 0 40 40"><rect x="8" y="8" width="24" height="24" fill="#4696ff" transform="rotate(45 20 20)"/></svg><div class="t">4v4 MVP</div><div class="u">title: Warlord</div></div>
+        <div class="medal locked"><svg viewBox="0 0 40 40"><path d="M10 34 L20 6 L30 34 Z" fill="#ffcd5a"/></svg><div class="t">LEVEL 10</div><div class="u">hat: Gold crown</div></div>
+      </div>
+      <div class="reset">RESET STATS &rsaquo;</div>
+    </div>
+
+    <div class="back">&larr; &nbsp;BACK<span class="k">ESC</span></div>
+  </div>
+  <p class="note"><em>Left (you edit):</em> name, hat, hat colour, a title you have unlocked, and your favourite team; SAVE writes it to the database. <em>Right (the game fills in):</em> your level with an XP bar and what the next level unlocks; seven stat tiles (calculated from your match history, so they can never disagree with it); your last matches with WIN / LOSS, score, size, length and your captures / tags / deaths, MVP marked in gold; achievements, the locked ones greyed out, each unlocking a hat or a title. RESET STATS asks first and cannot be undone.</p>
+
+  <div class="sec"><b>2</b><span>Where you find it, and what others see</span></div>
+  <div class="duo">
+    <div class="mini">
+      <div class="menuitems">
+        <div><span>I</span>PLAY</div>
+        <div class="on"><span>II</span>PROFILE</div>
+        <small>Your level, stats and history</small>
+        <div><span>III</span>HOW TO PLAY</div>
+        <div><span>IV</span>SETTINGS</div>
+        <div><span>V</span>CREDITS</div>
+        <div><span>VI</span>QUIT</div>
+      </div>
+    </div>
+    <div class="mini" style="padding:0">
+      <div class="floor"></div>
+      <div class="kn" style="left:16%;top:22%">
+        <svg viewBox="0 0 18 26" shape-rendering="crispEdges"><rect x="5" y="1" width="8" height="2" fill="#ffcd5a"/><rect x="5" y="3" width="8" height="6" fill="#c8c4e1"/><rect x="6" y="6" width="6" height="2" fill="#1a1428"/><rect x="3" y="9" width="12" height="8" fill="#eb4646"/><rect x="7" y="10" width="4" height="5" fill="#ffcd5a"/><rect x="5" y="17" width="3" height="7" fill="#5a4f78"/><rect x="10" y="17" width="3" height="7" fill="#5a4f78"/></svg>
+        <div class="tag"><span class="lv">Lv 7</span>RAVEN<span class="tt">THRONE KEEPER</span></div>
+      </div>
+      <div class="kn" style="left:58%;top:30%">
+        <svg viewBox="0 0 18 26" shape-rendering="crispEdges"><rect x="5" y="3" width="8" height="6" fill="#c8c4e1"/><rect x="6" y="6" width="6" height="2" fill="#1a1428"/><rect x="3" y="9" width="12" height="8" fill="#4696ff"/><rect x="7" y="10" width="4" height="5" fill="#ffcd5a"/><rect x="5" y="17" width="3" height="7" fill="#5a4f78"/><rect x="10" y="17" width="3" height="7" fill="#5a4f78"/></svg>
+        <div class="tag" style="color:#bfe0ff"><span class="lv">Lv 3</span>FROST<span class="tt">MARKSMAN</span></div>
+      </div>
+    </div>
+  </div>
+  <p class="note"><em>Left:</em> PROFILE becomes the second item of the main menu. <em>Right:</em> in the lobby (and on the results card) everyone sees your level and title under your name, so a new player can tell who the veterans are.</p>
+
+  <div class="sec"><b>3</b><span>The database (SQLite, a single file on your computer)</span></div>
+  <div class="db">
+    <div class="tbl"><h4>PLAYERS</h4><div class="k1">id <i>UUID, made on first launch</i></div><div>name <i>text</i></div><div>hat, hat_color <i>numbers</i></div><div>title <i>text</i></div><div>favourite_team <i>0 / 1 / any</i></div><div>xp <i>number</i></div><div>created_at <i>date</i></div></div>
+    <div class="tbl"><h4>MATCHES</h4><div class="k1">id <i>number</i></div><div>played_at <i>date</i></div><div>mode <i>players per team</i></div><div>winner <i>0 red / 1 blue</i></div><div>red_score, blue_score</div><div>length_sec</div></div>
+    <div class="tbl"><h4>MATCH_PLAYERS</h4><div class="k1">match_id &rarr; MATCHES</div><div class="k1">player_id &rarr; PLAYERS</div><div>name, team</div><div>captures, tags, deaths</div><div>score <i>points</i></div><div>was_mvp, won</div></div>
+    <div class="tbl"><h4>ACHIEVEMENTS</h4><div class="k1">player_id &rarr; PLAYERS</div><div>achievement <i>e.g. FIRST_WIN</i></div><div>unlocked_at <i>date</i></div></div>
+  </div>
+  <div class="flow">
+    <b>Match ends</b><i>&rarr; server sends final stats &rarr;</i><b class="g">Your game saves one MATCHES row + your MATCH_PLAYERS row</b><i>&rarr;</i><b>XP added, achievements checked</b><i>&rarr;</i><b>"Level up!" / "Achievement unlocked" on the results card</b>
+  </div>
+  <p class="note">Wins, win rate, K/D and MVP counts are not stored separately: the Profile screen asks the database for them (for example, wins = count of MATCH_PLAYERS rows where won = 1). The file lives in your user folder (<em>C:\Users\&lt;you&gt;\ThroneFall\profile.db</em>), so reinstalling the game keeps it, and you can open it in "DB Browser for SQLite" to show the tables.</p>
+</div>
+</body>
+</html>

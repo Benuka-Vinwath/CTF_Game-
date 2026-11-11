@@ -31,11 +31,11 @@ final class MenuScreen extends JComponent {
     }
 
     static final int VW = 1600, VH = 900;
-    private enum Page { MAIN, PLAY, HOWTO, SETTINGS, CREDITS }
-    private static final String[] ITEMS = {"PLAY", "HOW TO PLAY", "SETTINGS", "CREDITS", "QUIT"};
-    private static final String[] HINTS = {"Host a game or join a friend", "Rules, controls and tips", "Display, sound and network test",
-        "The people behind the throne", "Leave the throne room"};
-    private static final String[] NUMERALS = {"I", "II", "III", "IV", "V"};
+    private enum Page { MAIN, PLAY, PROFILE, HOWTO, SETTINGS, CREDITS }
+    private static final String[] ITEMS = {"PLAY", "PROFILE", "HOW TO PLAY", "SETTINGS", "CREDITS", "QUIT"};
+    private static final String[] HINTS = {"Host a game or join a friend", "Your level, stats and history", "Rules, controls and tips",
+        "Display, sound and network test", "The people behind the throne", "Leave the throne room"};
+    private static final String[] NUMERALS = {"I", "II", "III", "IV", "V", "VI"};
     private static final String[] COLOR_NAMES = {"GOLD", "SILVER", "ROSE", "JADE", "VIOLET", "CYAN"};
 
     static final Color GOLD = new Color(255, 205, 90), GOLD_HI = new Color(255, 241, 196), GOLD_LO = new Color(185, 130, 42),
@@ -43,6 +43,10 @@ final class MenuScreen extends JComponent {
         SOFT = new Color(200, 196, 225), MUTED = new Color(143, 138, 168), RED_FX = new Color(255, 90, 50), BLUE_FX = new Color(60, 200, 255);
 
     private final Actions actions;
+    private final Profile profile;        // who you are (name, looks, title, team) and your match history
+    private Profile.Stats stats;          // what the Profile page shows; reloaded when the page opens
+    private int title, team;
+    private double savedAt = -10, resetArmedAt = -10;   // "SAVED" flash; RESET needs a second click within 3 s
     private final Preferences prefs = Preferences.userNodeForPackage(MenuScreen.class);
     private Page page = Page.MAIN;
     private int sel;                      // selected main-menu item
@@ -75,12 +79,15 @@ final class MenuScreen extends JComponent {
     private int cacheW, cacheH;
     private Shape logoShape;
 
-    MenuScreen(Actions actions) {
+    MenuScreen(Actions actions, Profile profile) {
         this.actions = actions;
-        name.append(prefs.get("name", System.getProperty("user.name", "Knight")));
+        this.profile = profile;
+        name.append(profile.name());
         address.append(prefs.get("address", "localhost"));
-        hat = prefs.getInt("hat", 1);
-        hatColor = prefs.getInt("hatColor", 0);
+        hat = profile.hat();
+        hatColor = profile.hatColor();
+        title = profile.title();
+        team = profile.favouriteTeam();
         fx = prefs.getBoolean("fx", true);
         shake = prefs.getBoolean("shake", true);
         volume = prefs.getFloat("volume", 0.8f);
@@ -118,7 +125,13 @@ final class MenuScreen extends JComponent {
 
     void setAddress(String a) { address.setLength(0); address.append(a); }
 
-    void start() { timer.start(); requestFocusInWindow(); }
+    void start() {
+        fx = prefs.getBoolean("fx", fx);   // the in-game menu may have changed these
+        shake = prefs.getBoolean("shake", shake);
+        volume = prefs.getFloat("volume", volume);
+        timer.start();
+        requestFocusInWindow();
+    }
     void stop() { timer.stop(); }
 
     /** Shown under the Play tiles: "Connecting..." while busy, or why it failed in red. */
@@ -164,7 +177,9 @@ final class MenuScreen extends JComponent {
     private void key(KeyEvent e) {
         int k = e.getKeyCode();
         if (k == KeyEvent.VK_F11) { actions.toggleFullscreen(); return; }
-        if (page == Page.PLAY && (k == KeyEvent.VK_BACK_SPACE || (e.getKeyChar() >= ' ' && e.getKeyChar() < 127 && !e.isControlDown()))) {
+        boolean typing = page == Page.PLAY || page == Page.PROFILE;   // the Profile page types into the name only
+        if (typing && (k == KeyEvent.VK_BACK_SPACE || (e.getKeyChar() >= ' ' && e.getKeyChar() < 127 && !e.isControlDown()))) {
+            if (page == Page.PROFILE) editName = true;
             StringBuilder f = editName ? name : address;
             if (k == KeyEvent.VK_BACK_SPACE) { if (f.length() > 0) f.setLength(f.length() - 1); }
             else if (f.length() < (editName ? 12 : 60)) f.append(e.getKeyChar());
@@ -192,9 +207,10 @@ final class MenuScreen extends JComponent {
     private void open(int item) {
         switch (item) {
             case 0 -> { page = Page.PLAY; status = ""; statusError = false; }
-            case 1 -> page = Page.HOWTO;
-            case 2 -> page = Page.SETTINGS;
-            case 3 -> page = Page.CREDITS;
+            case 1 -> { page = Page.PROFILE; stats = profile.stats(); editName = true; }
+            case 2 -> page = Page.HOWTO;
+            case 3 -> page = Page.SETTINGS;
+            case 4 -> page = Page.CREDITS;
             default -> actions.quit();
         }
     }
@@ -214,10 +230,8 @@ final class MenuScreen extends JComponent {
     }
 
     private void save() {
-        prefs.put("name", name.toString());
+        profile.save(playerName(), hat, hatColor, title, team);   // name and looks live in the profile database
         prefs.put("address", address.toString());
-        prefs.putInt("hat", hat);
-        prefs.putInt("hatColor", hatColor);
         prefs.putBoolean("fx", fx);
         prefs.putBoolean("shake", shake);
         prefs.putFloat("volume", volume);
@@ -258,6 +272,7 @@ final class MenuScreen extends JComponent {
         switch (page) {
             case MAIN -> drawMain(g);
             case PLAY -> drawPlay(g);
+            case PROFILE -> drawProfilePage(g);
             case HOWTO -> drawHowTo(g);
             case SETTINGS -> drawSettings(g);
             case CREDITS -> drawCredits(g);
@@ -497,7 +512,7 @@ final class MenuScreen extends JComponent {
         g.setFont(Type.royal(17, false, 0.48f));
         Art.text(g, "CAPTURE  ·  HOLD  ·  CONQUER", 102, 290, VIOLET);
 
-        double y = 470;
+        double y = 410;   // six items
         for (int i = 0; i < ITEMS.length; i++) {
             boolean on = i == sel;
             double h = on ? 84 : 62, x = 100 + (on ? 16 : 0);
@@ -700,8 +715,8 @@ final class MenuScreen extends JComponent {
             new Color[]{new Color(255, 205, 90, 100), new Color(255, 205, 90, 0)}));
         g.fill(new Ellipse2D.Double(cx + cw / 2 - 110, cy + 392, 220, 26));
         knight(g, cx + cw / 2, cy + 120, 11, 1);
-        picker(g, cx + 24, cy + 450, cw - 48, LobbyRoom.HAT_NAMES[hat].toUpperCase(), () -> hat = (hat + LobbyMap.HATS - 1) % LobbyMap.HATS,
-            () -> hat = (hat + 1) % LobbyMap.HATS);
+        picker(g, cx + 24, cy + 450, cw - 48, LobbyRoom.HAT_NAMES[hat].toUpperCase(), () -> stepHat(-1),
+            () -> stepHat(1));
         picker(g, cx + 24, cy + 506, cw - 48, COLOR_NAMES[hatColor], () -> hatColor = (hatColor + COLOR_NAMES.length - 1) % COLOR_NAMES.length,
             () -> hatColor = (hatColor + 1) % COLOR_NAMES.length);
         double ny = cy + 560;
@@ -967,6 +982,233 @@ final class MenuScreen extends JComponent {
     }
 
     // ------------------------------------------------------------------ CREDITS (empty for now, as asked)
+
+    // ------------------------------------------------------------------ PROFILE (docs/profile-design.html)
+
+    /** Next or previous hat this player has unlocked; the crown and top hat are always free. */
+    private void stepHat(int dir) {
+        do hat = Math.floorMod(hat + dir, LobbyMap.HATS); while (!profile.hatUnlocked(hat));
+    }
+
+    private void stepTitle(int dir) {
+        do title = Math.floorMod(title + dir, Profile.TITLES.length); while (!profile.titleUnlocked(title));
+    }
+
+    private void drawProfilePage(Graphics2D g) {
+        if (stats == null) stats = profile.stats();
+        pageTitle(g, "PROFILE", "Your legend");
+        Color line = new Color(255, 205, 90, 80);
+
+        // left: who you are (you edit this)
+        double lx = 100, ly = 176, lw = 400, lh = 660, lcx = lx + lw / 2;
+        panel(g, lx, ly, lw, lh, 26, line, null);
+        g.setFont(Type.hud(15, true, 0.3f));
+        Art.textCenter(g, "YOUR KNIGHT", lx, lw, ly + 40, VIOLET);
+        g.setPaint(new RadialGradientPaint(new Point2D.Double(lcx, ly + 246), 100, new float[]{0f, 1f},
+            new Color[]{new Color(255, 205, 90, 110), new Color(255, 205, 90, 0)}));
+        g.fill(new Ellipse2D.Double(lcx - 100, ly + 234, 200, 24));
+        knight(g, lcx, ly + 86, 7, 1);
+        field(g, lx + 40, ly + 272, lw - 80, name.toString(), true, true, () -> editName = true);
+        g.setFont(Type.hud(17, true, 0.14f));
+        Art.textCenter(g, Profile.TITLES[title], lx, lw, ly + 344, GOLD_HI);
+
+        double rx = lx + 26, rw = lw - 52;
+        fieldLabel(g, "HAT", rx, ly + 392);
+        picker(g, rx + 86, ly + 366, rw - 86, LobbyRoom.HAT_NAMES[hat].toUpperCase(), () -> stepHat(-1), () -> stepHat(1));
+        fieldLabel(g, "COLOUR", rx, ly + 446);
+        for (int i = 0; i < LobbyRoom.HAT_COLORS.length; i++) {   // colour swatches
+            double sx = rx + 104 + i * 42, sy = ly + 438;
+            Ellipse2D.Double sw = new Ellipse2D.Double(sx - 14, sy - 14, 28, 28);
+            g.setColor(LobbyRoom.HAT_COLORS[i]);
+            g.fill(sw);
+            if (i == hatColor) { g.setColor(Color.WHITE); g.setStroke(new BasicStroke(2.2f)); g.draw(new Ellipse2D.Double(sx - 18, sy - 18, 36, 36)); g.setStroke(new BasicStroke(1)); }
+            final int c = i;
+            hits.add(new Object[]{sw.getBounds2D(), (Runnable) () -> { hatColor = c; save(); }});
+        }
+        fieldLabel(g, "TITLE", rx, ly + 502);
+        picker(g, rx + 86, ly + 476, rw - 86, Profile.TITLES[title], () -> stepTitle(-1), () -> stepTitle(1));
+        fieldLabel(g, "TEAM", rx, ly + 556);
+        String[] teams = {"RED", "BLUE", "ANY"};
+        Color[] tc = {new Color(255, 155, 140), new Color(156, 202, 255), SOFT};
+        for (int i = 0; i < 3; i++) {
+            int value = i == 2 ? -1 : i;
+            Rectangle2D.Double b = new Rectangle2D.Double(rx + 96 + i * 92, ly + 532, 82, 34);
+            boolean on = team == value;
+            g.setColor(on ? new Color(tc[i].getRed(), tc[i].getGreen(), tc[i].getBlue(), 40) : new Color(0, 0, 0, 0));
+            g.fill(b);
+            g.setColor(on ? tc[i] : new Color(170, 150, 235, 90));
+            g.draw(b);
+            g.setFont(Type.royal(15, true, 0.14f));
+            Art.textCenter(g, teams[i], b.x, b.width, b.y + 23, on ? tc[i] : MUTED);
+            hits.add(new Object[]{b, (Runnable) () -> { team = value; save(); }});
+        }
+        button(g, lx + 30, ly + lh - 72, lw - 60, "SAVE", false, () -> { save(); savedAt = time; stats = profile.stats(); });
+        if (time - savedAt < 2) {
+            g.setFont(Type.hud(16, true, 0.2f));
+            Art.textCenter(g, "SAVED", lx, lw, ly + lh - 84, new Color(110, 230, 130));
+        }
+
+        // right: what the game fills in
+        double px = 528, pw = 972;
+        panel(g, px, 176, pw, 118, 22, line, null);
+        double bcx = px + 70, bcy = 235;   // level badge
+        g.setPaint(new LinearGradientPaint(0, (float) (bcy - 40), 0, (float) (bcy + 40), new float[]{0f, .5f, 1f}, new Color[]{GOLD_HI, GOLD, GOLD_LO}));
+        Path2D hex = poly(bcx, bcy - 42, bcx + 37, bcy - 21, bcx + 37, bcy + 21, bcx, bcy + 42, bcx - 37, bcy + 21, bcx - 37, bcy - 21);
+        g.fill(hex);
+        g.setColor(GOLD_DK); g.setStroke(new BasicStroke(3)); g.draw(hex); g.setStroke(new BasicStroke(1));
+        g.setFont(Type.hud(36, true, 0f));
+        Art.textCenter(g, String.valueOf(stats.level), bcx - 40, 80, bcy + 13, new Color(26, 15, 2));
+        double bx = px + 140, bw = pw - 180;
+        g.setFont(Type.royal(24, true, 0.1f));
+        Art.text(g, "LEVEL " + stats.level, bx, 222, Color.WHITE);
+        g.setFont(Type.hud(18, true, 0.1f));
+        String xpText = stats.xpInto + " / " + stats.xpNeed + " XP";
+        Art.text(g, xpText, bx + bw - g.getFontMetrics().stringWidth(xpText), 220, SOFT);
+        g.setColor(new Color(255, 255, 255, 20));
+        g.fill(new Rectangle2D.Double(bx, 234, bw, 14));
+        double frac = stats.xpNeed == 0 ? 0 : (double) stats.xpInto / stats.xpNeed;
+        g.setPaint(new LinearGradientPaint((float) bx, 0, (float) (bx + bw), 0, new float[]{0f, .6f, 1f}, new Color[]{GOLD_LO, GOLD, GOLD_HI}));
+        g.fill(new Rectangle2D.Double(bx, 234, bw * frac, 14));
+        g.setColor(new Color(255, 205, 90, 90));
+        g.draw(new Rectangle2D.Double(bx, 234, bw, 14));
+        String reward = stats.level < 3 ? " · Level 3 unlocks the KNIGHT title" : stats.level < 5 ? " · Level 5 unlocks the CHAMPION title"
+            : stats.level < 10 ? " · Level 10 unlocks the LEGEND title" : "";
+        g.setFont(Type.hud(16, false, 0.04f));
+        Art.text(g, (stats.xpNeed - stats.xpInto) + " XP to Level " + (stats.level + 1) + reward, bx, 274, MUTED);
+
+        String[] keys = {"MATCHES", "WINS", "WIN RATE", "CAPTURES", "TAGS", "K / D", "MVP"};
+        String[] vals = {stats.matches + "", stats.wins + "", stats.matches == 0 ? "-" : Math.round(100.0 * stats.wins / stats.matches) + "%",
+            stats.captures + "", stats.tags + "", stats.matches == 0 ? "-" : String.format("%.1f", (double) stats.tags / Math.max(1, stats.deaths)), stats.mvps + ""};
+        double tw = (pw - 6 * 13) / 7;
+        for (int i = 0; i < 7; i++) {
+            double tx = px + i * (tw + 13);
+            g.setColor(new Color(20, 14, 40, 190));
+            g.fill(new Rectangle2D.Double(tx, 314, tw, 88));
+            g.setColor(new Color(170, 150, 235, 80));
+            g.draw(new Rectangle2D.Double(tx, 314, tw, 88));
+            g.setFont(Type.hud(36, true, 0f));
+            Art.textCenter(g, vals[i], tx, tw, 362, i == 2 || i == 6 ? GOLD : Color.WHITE);
+            g.setFont(Type.hud(13, true, 0.2f));
+            Art.textCenter(g, keys[i], tx, tw, 388, MUTED);
+        }
+
+        // recent matches
+        double hx = px, hy = 426, hw = 528, hh = 410;
+        panel(g, hx, hy, hw, hh, 22, line, null);
+        g.setFont(Type.hud(15, true, 0.3f));
+        Art.text(g, "RECENT MATCHES", hx + 26, hy + 36, VIOLET);
+        if (!profile.ok()) {
+            g.setFont(Type.hud(17, true, 0.04f));
+            wrap(g, "Match history needs the database library (lib/sqlite-jdbc). Start the game with play.ps1 or run_client.bat.", hx + 26, hy + 80, hw - 52, 24, MUTED);
+        } else if (stats.history.isEmpty()) {
+            g.setFont(Type.hud(18, true, 0.04f));
+            Art.text(g, "No matches yet. Play one and it shows up here.", hx + 26, hy + 80, MUTED);
+        }
+        double ry = hy + 56;
+        for (int i = 0; i < Math.min(8, stats.history.size()); i++) {
+            Object[] m = stats.history.get(i);   // {won, score, mode, length, C, T, D, mvp}
+            boolean won = (Boolean) m[0];
+            Rectangle2D.Double chip = new Rectangle2D.Double(hx + 26, ry + 8, 62, 26);
+            g.setColor(won ? new Color(110, 230, 130, 30) : new Color(235, 70, 70, 30));
+            g.fill(chip);
+            g.setColor(won ? new Color(110, 230, 130, 160) : new Color(255, 155, 140, 150));
+            g.draw(chip);
+            g.setFont(Type.hud(14, true, 0.14f));
+            Art.textCenter(g, won ? "WIN" : "LOSS", chip.x, chip.width, chip.y + 18, won ? new Color(110, 230, 130) : new Color(255, 155, 140));
+            g.setFont(Type.hud(18, true, 0.04f));
+            String mode = m[2] + "v" + m[2];
+            Art.text(g, (String) m[1], hx + 104, ry + 28, Color.WHITE);
+            double sw = g.getFontMetrics().stringWidth((String) m[1]);
+            Art.text(g, mode, hx + 116 + sw, ry + 28, SOFT);
+            if ((Boolean) m[7]) {
+                g.setFont(Type.hud(13, true, 0.16f));
+                Art.text(g, "MVP", hx + 156 + sw, ry + 28, GOLD);
+            }
+            int len = (Integer) m[3];
+            g.setFont(Type.hud(17, true, 0.02f));
+            Art.text(g, len > 0 ? len / 60 + ":" + String.format("%02d", len % 60) : "-", hx + 330, ry + 28, SOFT);
+            g.setFont(Type.hud(15, true, 0.08f));
+            String ctd = "C" + m[4] + " T" + m[5] + " D" + m[6];
+            Art.text(g, ctd, hx + hw - 26 - g.getFontMetrics().stringWidth(ctd), ry + 28, MUTED);
+            g.setColor(new Color(110, 95, 160, 70));
+            g.fill(new Rectangle2D.Double(hx + 26, ry + 42, hw - 52, 1));
+            ry += 42;
+        }
+
+        // achievements
+        double ax = 1082, ay = 426, aw = 418, ah = 410;
+        panel(g, ax, ay, aw, ah, 22, line, null);
+        g.setFont(Type.hud(15, true, 0.3f));
+        Art.text(g, "ACHIEVEMENTS", ax + 26, ay + 36, VIOLET);
+        g.setFont(Type.hud(15, true, 0.2f));
+        Art.text(g, stats.unlocked.size() + " / " + Profile.ACHIEVEMENTS.length, ax + 200, ay + 36, GOLD);
+        double cw = (aw - 52 - 2 * 10) / 3, chh = 92;
+        for (int i = 0; i < Profile.ACHIEVEMENTS.length; i++) {
+            String[] a = Profile.ACHIEVEMENTS[i];
+            boolean got = stats.unlocked.contains(a[0]);
+            double cx = ax + 26 + (i % 3) * (cw + 10), cy = ay + 54 + (i / 3) * (chh + 10);
+            Composite keep = g.getComposite();
+            if (!got) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.38f));
+            g.setColor(got ? new Color(255, 205, 90, 18) : new Color(0, 0, 0, 0));
+            g.fill(new Rectangle2D.Double(cx, cy, cw, chh));
+            g.setColor(got ? new Color(255, 205, 90, 90) : new Color(170, 150, 235, 70));
+            g.draw(new Rectangle2D.Double(cx, cy, cw, chh));
+            achievementIcon(g, i, cx + cw / 2, cy + 28, got);
+            g.setFont(Type.hud(13, true, 0.08f));
+            Art.textCenter(g, a[1], cx, cw, cy + 64, Color.WHITE);
+            g.setFont(Type.hud(12, false, 0.02f));
+            Art.textCenter(g, a[2], cx, cw, cy + 82, got ? GOLD_HI : MUTED);
+            g.setComposite(keep);
+        }
+        boolean armed = time - resetArmedAt < 3;
+        g.setFont(Type.hud(15, true, 0.2f));
+        String rs = armed ? "CLICK AGAIN TO DELETE ALL STATS" : "RESET STATS ›";
+        double rsw = g.getFontMetrics().stringWidth(rs);
+        Art.text(g, rs, ax + aw - 26 - rsw, ay + ah - 18, armed ? new Color(255, 110, 90) : new Color(255, 155, 140));
+        hits.add(new Object[]{new Rectangle2D.Double(ax + aw - 36 - rsw, ay + ah - 40, rsw + 20, 30), (Runnable) () -> {
+            if (time - resetArmedAt < 3) {
+                profile.reset();
+                title = profile.title();
+                hat = profile.hat();
+                stats = profile.stats();
+                resetArmedAt = -10;
+            } else resetArmedAt = time;
+        }});
+        drawFooter(g, false);
+    }
+
+    private void achievementIcon(Graphics2D g, int i, double x, double y, boolean got) {
+        switch (i) {
+            case 0 -> crown(g, x, y + 10, 0.5);
+            case 1 -> Art.flagIcon(g, x, y, 30, new Color(235, 70, 70), time);
+            case 2 -> {
+                g.setColor(BLUE_FX);
+                g.setStroke(new BasicStroke(2.5f));
+                g.draw(new Ellipse2D.Double(x - 13, y - 13, 26, 26));
+                g.setStroke(new BasicStroke(1));
+                g.setColor(RED_FX);
+                g.fill(new Ellipse2D.Double(x - 3, y - 3, 6, 6));
+            }
+            default -> {
+                Color[] c = {null, null, null, GOLD, new Color(110, 230, 130), RED_FX, VIOLET, new Color(70, 150, 255), GOLD};
+                g.setColor(c[i]);
+                Shape s = switch (i) {
+                    case 3 -> poly(x, y - 15, x + 4.5, y - 4.5, x + 15, y - 3.5, x + 7, y + 4, x + 9.5, y + 15, x, y + 9, x - 9.5, y + 15, x - 7, y + 4, x - 15, y - 3.5, x - 4.5, y - 4.5);
+                    case 4 -> poly(x - 15, y + 12, x - 6, y - 8, x, y + 3, x + 6, y - 13, x + 15, y + 12);
+                    case 5 -> new Ellipse2D.Double(x - 10, y - 14, 20, 28);
+                    case 6 -> new Ellipse2D.Double(x - 13, y - 13, 26, 26);
+                    case 7 -> poly(x, y - 15, x + 15, y, x, y + 15, x - 15, y);
+                    default -> poly(x, y - 15, x + 14, y + 13, x - 14, y + 13);
+                };
+                g.fill(s);
+            }
+        }
+    }
+
+    private void fieldLabel(Graphics2D g, String s, double x, double y) {
+        g.setFont(Type.hud(13, true, 0.25f));
+        Art.text(g, s, x, y, MUTED);
+    }
 
     private void drawCredits(Graphics2D g) {
         crown(g, VW / 2.0, 130, 0.9);

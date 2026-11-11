@@ -10,4 +10,4 @@ $files = (Get-ChildItem src -Recurse -Filter *.java).FullName
 javac --release 17 -d out $files
 if ($LASTEXITCODE -ne 0) { Write-Host "Compile failed"; exit 1 }
 
-java -cp out ctf.client.Main $Server
+java --enable-native-access=ALL-UNNAMED -cp "out;lib/*" ctf.client.Main $Server   # lib holds the SQLite driver for the player profile

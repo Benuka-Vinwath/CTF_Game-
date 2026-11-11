@@ -29,18 +29,6 @@ public class GamePanel extends JPanel {
         double x, y, vx, vy, life, max; Color c; int size = 4; boolean soft;
     }
 
-    private static final class FireworkRocket {
-        double x, y, vx, vy, fuse; Color c; int team;
-    }
-
-    private static final class FireworkSpark {
-        double x, y, vx, vy, life, max; Color c; int size;
-    }
-
-    private static final class MagicalFlame {
-        double x, y, vx, vy, life, max; Color c; int size;
-    }
-
     private final NetLink link;
     private final int myId;
 
@@ -52,21 +40,17 @@ public class GamePanel extends JPanel {
     private final List<double[]> beams = new ArrayList<>();      // {x, y, team, life}
     private final List<Object[]> feed = new ArrayList<>();       // {text, expiryNs}
     private final double[][] embers = new double[72][4];         // x, y, speed, phase
-    private final List<FireworkRocket> rockets = new ArrayList<>();
-    private final List<FireworkSpark> sparks = new ArrayList<>();
-    private final List<MagicalFlame> flames = new ArrayList<>();
-    private double victoryTimer;
-    private int celebrationWinner = -1;
-    private final Rectangle btnPlayAgainBounds = new Rectangle();
-    private boolean hoverPlayAgain;
-    private boolean viewLeaderboardManual;
-    private final Rectangle btnLeaderboardToggle = new Rectangle();
-    private boolean hoverLeaderboardToggle;
-    private final Rectangle btnLeaderboardPlayAgain = new Rectangle();
-    private boolean hoverLeaderboardPlayAgain;
-    private final Rectangle btnLeaderboardBack = new Rectangle();
-    private boolean hoverLeaderboardBack;
-    private double nextRocketTime;
+    // match ending (drawEnding): final moment 0-2 s, VICTORY / DEFEAT 2-7 s, then results until everyone is back in the lobby
+    static final double END_FINAL = 2, END_RESULTS = 7, END_RETURN = 20;   // END_RETURN mirrors the server's AGAIN_TIMEOUT_SEC
+    private final double[][] endFx = new double[90][4];          // sparks or ash: x, y (0..1 of the screen), speed, phase
+    private String finalBanner = "", finalSub = "";              // "FINAL CAPTURE" / "TIME!" and who did it
+    private int finalScorer = -1;                                // gets the gold ring in the final moment
+    private int roundStartLeft = -1;                             // clock seconds when the match began, for its length
+    private final Rectangle2D.Double backBtn = new Rectangle2D.Double();
+    private String lastMatch;                                    // "RED WON 3 - 1 · MVP RAVEN" on the lobby board
+    private int mvpId = -1;                                      // stands in a gold glow in the lobby until the next match
+    private boolean recorded;                                    // this match is saved to the profile
+    private List<String> news = List.of();                       // "+140 XP", "LEVEL UP!", achievements: shown on the results card
 
     // predicted own bullets: {ox, oy, vx, vy, team, age, matchedBefore, x, y}; see reconcileGhosts()
     private final List<double[]> ghosts = new ArrayList<>();
@@ -96,7 +80,7 @@ public class GamePanel extends JPanel {
     private final double[] scorePop = new double[2];             // 1 -> 0 after a team scores, drives the score bounce
     private final Map<Integer, Double> spawnT = new HashMap<>(); // player id -> seconds of respawn materialise left
     private double smokeT;
-    private final List<Object[]> blooms = new ArrayList<>();      // {x, y, Color, age}: short light flashes at each firework burst
+    private double endT;                                          // seconds since the match ended (see tick)
 
     // lobby: the waiting room, in-game chat and the ready / start buttons
     private final LobbyRoom room = new LobbyRoom();
@@ -105,6 +89,27 @@ public class GamePanel extends JPanel {
     private final Map<Integer, Object[]> bubbles = new HashMap<>(); // player id -> {text, expiryNs}: chat above heads
     private final Rectangle2D.Double readyBtn = new Rectangle2D.Double(), startBtn = new Rectangle2D.Double(); // world units
     private boolean hoverReady, hoverStart;
+    private final Rectangle2D.Double leaveBtn = new Rectangle2D.Double();
+
+    // in-game menu (Esc): resume, settings, leave, quit. It is an online game, so nothing pauses behind it.
+    /** What the in-game menu asks the game window to do. The Demo and tests leave it unset: Esc then does nothing. */
+    interface Exits {
+        void leave();
+        void quit();
+        void toggleFullscreen();
+        boolean fullscreen();
+        boolean hosting();
+        /** Save the finished match to the player's profile; returns what to celebrate ("+140 XP", "LEVEL UP!  LEVEL 4"). */
+        List<String> matchFinished(Snapshot s, int myId, int mvpId, int lengthSec);
+        boolean hatUnlocked(int hat);
+    }
+
+    private enum Esc { CLOSED, MAIN, SETTINGS, LEAVE, QUIT }
+    private Exits exits;
+    private Esc esc = Esc.CLOSED;
+    private int escSel;
+    private final List<Object[]> escHits = new ArrayList<>();   // {Rectangle2D, Runnable action, Integer row}, rebuilt every frame
+    private final java.util.prefs.Preferences prefs = java.util.prefs.Preferences.userNodeForPackage(GamePanel.class);   // shared with MenuScreen
     private final Rectangle2D.Double[] modeBtns = {new Rectangle2D.Double(), new Rectangle2D.Double(), new Rectangle2D.Double(), new Rectangle2D.Double()};
 
     public GamePanel(NetLink link, int myId) {
@@ -120,7 +125,9 @@ public class GamePanel extends JPanel {
         addKeyListener(new KeyAdapter() {
             @Override public void keyPressed(KeyEvent e) {
                 int k = e.getKeyCode();
-                if (typing) { typeKey(e); return; }
+                if (typing) { typeKey(e); return; }   // Esc while typing cancels the chat line first
+                if (esc != Esc.CLOSED) { escKey(k); return; }
+                if (k == KeyEvent.VK_ESCAPE) { openEsc(); return; }
                 if (k == KeyEvent.VK_ENTER && (last == null || last.winner < 0)) { // open the chat line
                     typing = true;
                     keys.clear();
@@ -132,18 +139,14 @@ public class GamePanel extends JPanel {
                     if ((k == KeyEvent.VK_E || k == KeyEvent.VK_C) && nearLaptop()) {
                         Protocol.LobbyEntry me = entry(myId);
                         int hat = me == null ? 0 : me.hat(), col = me == null ? 0 : me.hatColor();
-                        if (k == KeyEvent.VK_E) hat++; else col++;
+                        if (k == KeyEvent.VK_E) {   // next hat this player has unlocked (the crown is always free)
+                            do hat = (hat + 1) % LobbyMap.HATS; while (exits != null && !exits.hatUnlocked(hat));
+                        } else col++;
                         link.sendLook(hat, col);   // the server wraps the values and checks we are at the laptop
                     }
                 }
                 keys.add(k);
-                if (k == KeyEvent.VK_TAB) {
-                    if (last != null && last.winner >= 0) {
-                        viewLeaderboardManual = !viewLeaderboardManual;
-                    } else {
-                        showBoard = true;
-                    }
-                }
+                if (k == KeyEvent.VK_TAB && (last == null || last.winner < 0)) showBoard = true;
                 if (k == KeyEvent.VK_L) link.toggleLagSim();
                 if (k == KeyEvent.VK_V) shakeOn = !shakeOn;
                 if (k == KeyEvent.VK_F) fx = !fx; // optional effects off if they cost frames
@@ -160,61 +163,41 @@ public class GamePanel extends JPanel {
         MouseAdapter m = new MouseAdapter() {
             @Override public void mouseMoved(MouseEvent e) {
                 mouseX = e.getX(); mouseY = e.getY();
+                if (esc != Esc.CLOSED) {
+                    boolean over = false;
+                    for (Object[] h : escHits) if (((Rectangle2D) h[0]).contains(mouseX, mouseY)) { escSel = (Integer) h[2]; over = true; }
+                    setCursor(Cursor.getPredefinedCursor(over ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                    return;
+                }
                 if (inLobby()) {
                     hoverReady = readyBtn.contains(mouseX, mouseY);
                     hoverStart = startBtn.contains(mouseX, mouseY);
                     boolean overMode = false;
                     if (amHost()) for (Rectangle2D.Double r : modeBtns) overMode |= r.contains(mouseX, mouseY);
+                    overMode |= leaveBtn.contains(mouseX, mouseY);
                     setCursor(Cursor.getPredefinedCursor(hoverReady || hoverStart || overMode ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                 } else if (last != null && last.winner >= 0) {
-                    boolean autoLb = (last.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
-                    boolean showingLb = autoLb || viewLeaderboardManual;
-                    boolean anyHover;
-                    if (!showingLb) {
-                        hoverPlayAgain = btnPlayAgainBounds.contains(mouseX, mouseY);
-                        hoverLeaderboardToggle = btnLeaderboardToggle.contains(mouseX, mouseY);
-                        anyHover = hoverPlayAgain || hoverLeaderboardToggle;
-                    } else {
-                        hoverLeaderboardPlayAgain = btnLeaderboardPlayAgain.contains(mouseX, mouseY);
-                        hoverLeaderboardBack = btnLeaderboardBack.contains(mouseX, mouseY);
-                        anyHover = hoverLeaderboardPlayAgain || hoverLeaderboardBack;
-                    }
-                    setCursor(Cursor.getPredefinedCursor(anyHover ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                    setCursor(Cursor.getPredefinedCursor(backBtn.contains(mouseX, mouseY) ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                 }
             }
             @Override public void mouseDragged(MouseEvent e) { mouseMoved(e); }
             @Override public void mousePressed(MouseEvent e) {
                 if (e.getButton() != MouseEvent.BUTTON1) return;
+                if (esc != Esc.CLOSED) { // the in-game menu takes every click while it is open
+                    for (int i = escHits.size() - 1; i >= 0; i--)
+                        if (((Rectangle2D) escHits.get(i)[0]).contains(e.getX(), e.getY())) { ((Runnable) escHits.get(i)[1]).run(); break; }
+                    return;
+                }
                 if (inLobby()) { // buttons take the click; it does not also fire a shot
+                    if (exits != null && leaveBtn.contains(e.getX(), e.getY())) { exits.leave(); return; }
                     if (readyBtn.contains(e.getX(), e.getY())) { link.sendReady(!amReady()); return; }
                     if (startBtn.contains(e.getX(), e.getY())) { if (lobbyCanStart()) link.sendBegin(); return; }
                     for (int i = 0; i < 4; i++)
                         if (modeBtns[i].contains(e.getX(), e.getY())) { if (amHost()) link.sendMode(i + 1); return; }
                 }
-                if (last != null && last.winner >= 0) {
-                    boolean autoLb = (last.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
-                    boolean showingLb = autoLb || viewLeaderboardManual;
-                    if (!showingLb) {
-                        if (btnLeaderboardToggle.contains(e.getX(), e.getY())) {
-                            viewLeaderboardManual = true;
-                            return;
-                        }
-                        if (btnPlayAgainBounds.contains(e.getX(), e.getY())) {
-                            setCursor(Cursor.getDefaultCursor());
-                            link.requestPlayAgain();
-                            return;
-                        }
-                    } else {
-                        if (btnLeaderboardPlayAgain.contains(e.getX(), e.getY())) {
-                            setCursor(Cursor.getDefaultCursor());
-                            link.requestPlayAgain();
-                            return;
-                        }
-                        if (btnLeaderboardBack.contains(e.getX(), e.getY())) {
-                            viewLeaderboardManual = false;
-                            return;
-                        }
-                    }
+                if (last != null && last.winner >= 0) {   // the match is over: no shooting, only the BACK TO LOBBY button
+                    if (backBtn.contains(e.getX(), e.getY())) link.requestPlayAgain();
+                    return;
                 }
                 mouseMoved(e); // aim at the click point, not at the last move event
                 mouseDown = shootLatch = true; // latch: a click shorter than one send interval still fires
@@ -299,6 +282,128 @@ public class GamePanel extends JPanel {
         }
     }
 
+    // ---------- in-game menu (Esc) ----------
+
+    void setExits(Exits x) { exits = x; }
+
+    private void openEsc() {
+        if (exits == null) return;
+        esc = Esc.MAIN;
+        escSel = 0;
+        keys.clear();   // let go of everything: no running or firing while the menu is open
+        mouseDown = shootLatch = false;
+        showBoard = false;
+    }
+
+    /** The window's close button: quit at once, or ask first when that would hurt the others. */
+    void askQuit() {
+        if (quitNeedsConfirm()) { openEsc(); esc = Esc.QUIT; escSel = 1; }
+        else if (exits != null) exits.quit();
+    }
+
+    private boolean inMatch() { return last != null && last.phase == Snapshot.PLAYING && last.winner < 0; }
+
+    private int others() { Protocol.Lobby l = link.lobby(); return l == null ? 0 : Math.max(0, l.entries().size() - 1); }
+
+    private boolean quitNeedsConfirm() { return inMatch() || (exits != null && exits.hosting() && others() > 0); }
+
+    private void escKey(int k) {
+        int rows = 0;
+        for (Object[] h : escHits) rows = Math.max(rows, (Integer) h[2] + 1);
+        if (k == KeyEvent.VK_ESCAPE) esc = esc == Esc.MAIN ? Esc.CLOSED : Esc.MAIN;
+        else if ((k == KeyEvent.VK_UP || k == KeyEvent.VK_W) && rows > 0) escSel = (escSel + rows - 1) % rows;
+        else if ((k == KeyEvent.VK_DOWN || k == KeyEvent.VK_S) && rows > 0) escSel = (escSel + 1) % rows;
+        else if (k == KeyEvent.VK_ENTER || k == KeyEvent.VK_SPACE)
+            for (Object[] h : escHits) if ((Integer) h[2] == escSel) { ((Runnable) h[1]).run(); break; }
+    }
+
+    private void saveSetting(String key, Object value) {
+        try {
+            if (value instanceof Boolean b) prefs.putBoolean(key, b); else prefs.putFloat(key, (Float) value);
+        } catch (Exception ignored) { /* remembering a setting is a convenience; never fail over it */ }
+    }
+
+    private void drawEscMenu(Graphics2D g) {
+        escHits.clear();
+        if (esc == Esc.CLOSED) return;
+        final double x0 = vX0(), y0 = vY0(), w = vW(), h = vH();
+        g.setColor(new Color(4, 3, 10, 175));
+        g.fill(new Rectangle2D.Double(x0, y0, w, h));
+        String title, note = null;
+        List<Object[]> rows = new ArrayList<>();   // {label, action, colour}
+        Color gold = new Color(255, 205, 90), red = new Color(255, 150, 135), soft = new Color(200, 196, 225);
+        switch (esc) {
+            case MAIN -> {
+                title = "MENU";
+                note = "The game keeps running while this menu is open.";
+                rows.add(new Object[]{"RESUME", (Runnable) () -> esc = Esc.CLOSED, Color.WHITE});
+                rows.add(new Object[]{"SETTINGS", (Runnable) () -> { esc = Esc.SETTINGS; escSel = 0; }, Color.WHITE});
+                rows.add(new Object[]{inLobby() ? "LEAVE LOBBY" : "LEAVE MATCH", (Runnable) () -> {
+                    if (inMatch()) { esc = Esc.LEAVE; escSel = 1; } else exits.leave();
+                }, Color.WHITE});
+                rows.add(new Object[]{"QUIT GAME", (Runnable) () -> {
+                    if (quitNeedsConfirm()) { esc = Esc.QUIT; escSel = 1; } else exits.quit();
+                }, red});
+            }
+            case SETTINGS -> {
+                title = "SETTINGS";
+                rows.add(new Object[]{"FULLSCREEN   " + (exits.fullscreen() ? "ON" : "OFF"), (Runnable) exits::toggleFullscreen, Color.WHITE});
+                rows.add(new Object[]{"VISUAL EFFECTS   " + (fx ? "ON" : "OFF"), (Runnable) () -> { fx = !fx; saveSetting("fx", fx); }, Color.WHITE});
+                rows.add(new Object[]{"SCREEN SHAKE   " + (shakeOn ? "ON" : "OFF"), (Runnable) () -> { shakeOn = !shakeOn; saveSetting("shake", shakeOn); }, Color.WHITE});
+                rows.add(new Object[]{"SOUND   " + Math.round(Sfx.volume * 100) + "%", (Runnable) () -> {
+                    Sfx.volume = Sfx.volume >= 0.99f ? 0f : Math.min(1f, Math.round(Sfx.volume * 10 + 2) / 10f);   // 0, 20 .. 100%, then back to 0
+                    saveSetting("volume", Sfx.volume);
+                    Sfx.play("pickup");
+                }, Color.WHITE});
+                rows.add(new Object[]{"BACK", (Runnable) () -> { esc = Esc.MAIN; escSel = 1; }, soft});
+            }
+            case LEAVE -> {
+                title = "LEAVE THE MATCH?";
+                note = exits.hosting() ? "You are hosting: the game keeps running for the others." : "Your team will be one player short.";
+                rows.add(new Object[]{"LEAVE", (Runnable) exits::leave, red});
+                rows.add(new Object[]{"STAY", (Runnable) () -> esc = Esc.CLOSED, Color.WHITE});
+            }
+            default -> {
+                title = "QUIT THE GAME?";
+                int n = others();
+                note = exits.hosting() && n > 0 ? "You are hosting. Quitting ends the game for " + n + (n == 1 ? " other player." : " other players.")
+                    : "Your team will be one player short.";
+                rows.add(new Object[]{"QUIT", (Runnable) exits::quit, red});
+                rows.add(new Object[]{"STAY", (Runnable) () -> esc = Esc.CLOSED, Color.WHITE});
+            }
+        }
+        escSel = Math.min(escSel, rows.size() - 1);
+        double pw = 460, rowH = 52, ph = 118 + rows.size() * (rowH + 8) + (note != null ? 40 : 0);
+        double px = x0 + (w - pw) / 2, py = y0 + (h - ph) / 2;
+        Art.plate(g, px, py, pw, ph, 16, gold, time, fx);
+        g.setFont(Type.logo(18));
+        Art.textCenter(g, "THE THRONEFALL", px, pw, py + 38, new Color(170, 150, 235));
+        g.setFont(Type.royal(30, true, 0.14f));
+        Art.textCenter(g, title, px, pw, py + 80, gold);
+        double ry = py + 104;
+        for (int i = 0; i < rows.size(); i++) {
+            Object[] r = rows.get(i);
+            boolean on = i == escSel;
+            Rectangle2D.Double box = new Rectangle2D.Double(px + 36, ry, pw - 72, rowH);
+            escHits.add(new Object[]{box, r[1], i});
+            if (on) {
+                g.setPaint(new LinearGradientPaint((float) box.x, 0, (float) (box.x + box.width), 0, new float[]{0f, .5f, 1f},
+                    new Color[]{new Color(255, 205, 90, 0), new Color(255, 205, 90, 60), new Color(255, 205, 90, 0)}));
+                g.fill(box);
+                g.setColor(gold);
+                g.fill(new Rectangle2D.Double(box.x, box.y + box.height - 2, box.width, 2));
+            }
+            g.setFont(Type.royal(22, true, 0.16f));
+            Color c = (Color) r[2];
+            Art.textCenter(g, (String) r[0], box.x, box.width, box.y + 34, on ? (c == Color.WHITE ? Color.WHITE : c.brighter()) : new Color(c.getRed(), c.getGreen(), c.getBlue(), 170));
+            ry += rowH + 8;
+        }
+        if (note != null) {
+            g.setFont(Type.hud(16, false, 0.04f));
+            Art.textCenter(g, note, px, pw, ry + 22, new Color(170, 165, 200));
+        }
+    }
+
     private void typeKey(KeyEvent e) {
         int k = e.getKeyCode();
         if (k == KeyEvent.VK_ENTER) {
@@ -319,6 +424,7 @@ public class GamePanel extends JPanel {
 
     private void accept(Snapshot s) {
         if (last != null) detectEvents(last, s);
+        if (s.winner >= 0 && Math.abs(endT - s.matchEndElapsedSec) > 0.5) endT = s.matchEndElapsedSec;   // joined late, or drifted
         prev = last;
         last = s;
         buf.add(s);
@@ -430,15 +536,19 @@ public class GamePanel extends JPanel {
             if (e[1] < vY0() - 5) respawnEmber(e, false);
         }
         if (last != null && last.winner >= 0) {
-            victoryTimer += dt;
-            stepCelebration(dt, last.winner);
-        } else {
-            victoryTimer = 0;
-            rockets.clear();
-            sparks.clear();
-            flames.clear();
+            endT += dt;   // smooth local clock for the ending; accept() re-syncs it to the server's
+            if (!recorded && endT >= 4 && exits != null) {   // by now the final STATS line has arrived (it is sent with GAMEOVER)
+                recorded = true;
+                Snapshot.P mvp = best(last, RANK);
+                news = exits.matchFinished(last, myId, mvp == null ? -1 : mvp.id, roundStartLeft > 0 ? roundStartLeft - last.timeLeftSec : -1);
+            }
+            boolean won = won();
+            for (double[] e : endFx) {   // sparks rise for the winners, ash drifts down for the losers
+                e[1] += (won ? -1 : 1) * e[2] * dt;
+                e[3] += dt * 2;
+                if (e[1] < -0.05 || e[1] > 1.05) spawnEndFx(e, false, won);
+            }
         }
-        for (Iterator<Object[]> it = blooms.iterator(); it.hasNext(); ) { Object[] b = it.next(); b[3] = (Double) b[3] + dt; if ((Double) b[3] > 0.4) it.remove(); }
         for (Iterator<double[]> it = rings.iterator(); it.hasNext(); ) { double[] r = it.next(); if ((r[3] += dt) >= r[4]) it.remove(); }
         for (Iterator<Object[]> it = notices.iterator(); it.hasNext(); ) { Object[] n = it.next(); n[2] = (Double) n[2] + dt; if ((Double) n[2] > 2.6) it.remove(); }
         for (int t = 0; t < 2; t++) scorePop[t] = Math.max(0, scorePop[t] - 1.4 * dt);
@@ -532,9 +642,9 @@ public class GamePanel extends JPanel {
                 Sfx.play("score");
             } else if (b.phase == Snapshot.LOBBY) {
                 say("Back in the lobby", GOLD);
-                viewLeaderboardManual = false;
-                celebrationWinner = -1;
+                if (a.winner >= 0) rememberMatch(a);
             }
+            if (b.phase == Snapshot.PLAYING) { roundStartLeft = b.timeLeftSec; mvpId = -1; }
         }
         if (a.phase == Snapshot.LOBBY && b.phase == Snapshot.LOBBY) {
             if (a.countdown > 0 && b.countdown <= 0) say("Countdown cancelled", new Color(255, 130, 100));
@@ -637,12 +747,61 @@ public class GamePanel extends JPanel {
                 shake = Math.max(shake, 7);
             }
         }
-        if (b.winner >= 0 && a.winner < 0) {
-            Sfx.play("win");
-            celebrationWinner = b.winner;
-            victoryTimer = 0;
-            triggerOpeningCelebration(b.winner);
+        if (b.winner >= 0 && a.winner < 0) matchEnded(a, b);
+    }
+
+    // ---------- match ending ----------
+
+    private boolean won() {
+        Snapshot.P me = last == null ? null : find(last, myId);
+        return me != null && last.winner == me.team;
+    }
+
+    /** Who ended it: the capture that reached 3, or the clock. Sets the banner for the final moment. */
+    private void matchEnded(Snapshot a, Snapshot b) {
+        int w = b.winner, taken = 1 - w;   // the winners scored by bringing home the other team's flag
+        endT = b.matchEndElapsedSec;
+        finalScorer = -1;
+        recorded = false;
+        news = List.of();
+        if (b.score[w] > a.score[w]) {
+            finalBanner = "FINAL CAPTURE";
+            if (a.flags[taken].state == Snapshot.CARRIED) finalScorer = a.flags[taken].carrier;   // unknown if that snapshot was lost
+            finalSub = (finalScorer >= 0 ? name(b, finalScorer).toUpperCase() : TEAM_NAME[w]) + " BRINGS THE " + TEAM_NAME[taken] + " FLAG HOME";
+        } else {
+            finalBanner = "TIME!";
+            finalSub = TEAM_NAME[w] + (b.score[0] == b.score[1] ? " WINS THE TIE-BREAK" : " WINS ON POINTS");
         }
+        boolean won = won();
+        for (double[] e : endFx) spawnEndFx(e, true, won);
+        Sfx.play(won ? "win" : "expire");
+        shake = Math.max(shake, 6);
+    }
+
+    private void spawnEndFx(double[] e, boolean anywhere, boolean won) {
+        e[0] = rnd.nextDouble();
+        e[1] = anywhere ? rnd.nextDouble() : (won ? 1.04 : -0.04);
+        e[2] = (won ? 0.08 : 0.04) + rnd.nextDouble() * 0.06;
+        e[3] = rnd.nextDouble() * 6.28;
+    }
+
+    /** Best first: points, then captures, then tags, then fewer deaths. */
+    private static final Comparator<Snapshot.P> RANK = (p, q) ->
+        p.score != q.score ? Integer.compare(q.score, p.score) : p.captures != q.captures ? Integer.compare(q.captures, p.captures)
+            : p.tags != q.tags ? Integer.compare(q.tags, p.tags) : Integer.compare(p.deaths, q.deaths);
+
+    private static Snapshot.P best(Snapshot s, Comparator<Snapshot.P> by) {
+        Snapshot.P b = null;
+        for (Snapshot.P p : s.players) if (b == null || by.compare(p, b) < 0) b = p;
+        return b;
+    }
+
+    /** The lobby board and the MVP glow remember the match just played. */
+    private void rememberMatch(Snapshot s) {
+        int w = s.winner;
+        Snapshot.P mvp = best(s, RANK);
+        mvpId = mvp == null ? -1 : mvp.id;
+        lastMatch = "LAST MATCH: " + TEAM_NAME[w] + " WON " + s.score[w] + " - " + s.score[1 - w] + (mvp != null ? "  ·  MVP " + mvp.name.toUpperCase() : "");
     }
 
     /** Where the flag was just picked up: the carrier if known, else its base. */
@@ -760,6 +919,8 @@ public class GamePanel extends JPanel {
         boolean lobby = s.phase == Snapshot.LOBBY;
         if (lobby) {
             room.drawWorld(g, vX0(), vY0(), vW(), vH(), time, fx);
+            double[] mvpAt = mvpId >= 0 ? renderPos.get(mvpId) : null;   // last match's MVP stands in a gold glow
+            if (mvpAt != null) Art.glow(g, GOLD, mvpAt[0], mvpAt[1] + 6, 80, (float) (0.55 + 0.2 * Math.sin(time * 2.6)));
             drawPlayers(g, s);
         } else {
             scenery.drawBack(g, vX0(), vY0(), vW(), vH(), camX, camY, time, fx);
@@ -792,41 +953,6 @@ public class GamePanel extends JPanel {
         for (double[] b : beams) Art.beam(g, b[0], b[1], Art.FX[(int) b[2]], (float) Math.min(1, b[3]));
         if (fx) drawEmbers(g);
 
-        // Fireworks and celebration flames in world space
-        for (FireworkRocket r : rockets) {
-            g.setColor(r.c);
-            g.fill(new Ellipse2D.Double(r.x - 2, r.y - 4, 4, 8));
-        }
-        for (FireworkSpark sp : sparks) {
-            Composite oldComp = g.getComposite();
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, sp.life / sp.max)));
-            g.setColor(sp.c);
-            g.setStroke(new BasicStroke(sp.size * 0.75f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g.draw(new Line2D.Double(sp.x, sp.y, sp.x - sp.vx * 0.045, sp.y - sp.vy * 0.045)); // motion streak
-            g.setColor(Color.WHITE);
-            g.fill(new Ellipse2D.Double(sp.x - sp.size * 0.3, sp.y - sp.size * 0.3, sp.size * 0.6, sp.size * 0.6));
-            g.setComposite(oldComp);
-        }
-        if (fx) for (Object[] b : blooms) Art.glow(g, (Color) b[2], (Double) b[0], (Double) b[1], 120, (float) (0.55 * (1 - (Double) b[3] / 0.4)));
-        if (fx && flames.size() > 20) // the fire lights the whole room
-            for (int i = 0; i < 6; i++) Art.glow(g, new Color(255, 120, 40), vX0() + vW() * (i + 0.5) / 6, vY0() + vH(), 190, (float) (0.28 + 0.08 * Math.sin(time * 7 + i)));
-        g.setStroke(new BasicStroke(1));
-        for (MagicalFlame fl : flames) { // layered flame tongues: flame colour outside, orange and white-hot inside
-            double k = Math.max(0, fl.life / fl.max), sz = fl.size * (0.4 + 0.6 * k), h = sz * 2.0, w = sz * 1.35;
-            double sway = Math.sin(time * 9 + fl.x * 0.1) * sz * 0.25;
-            int al = (int) (215 * Math.min(1, k * 1.8));
-            for (int layer = 0; layer < 3; layer++) {
-                double sc = 1 - layer * 0.34, lh = h * sc, lw = w * sc;
-                Path2D.Double p = new Path2D.Double();
-                p.moveTo(fl.x - lw / 2, fl.y);
-                p.curveTo(fl.x - lw / 2, fl.y - lh * 0.45, fl.x + sway - lw * 0.15, fl.y - lh * 0.72, fl.x + sway, fl.y - lh);
-                p.curveTo(fl.x + sway + lw * 0.15, fl.y - lh * 0.72, fl.x + lw / 2, fl.y - lh * 0.45, fl.x + lw / 2, fl.y);
-                p.closePath();
-                g.setColor(layer == 0 ? new Color(fl.c.getRed(), fl.c.getGreen(), fl.c.getBlue(), al)
-                    : layer == 1 ? new Color(255, 170, 50, (int) (al * 0.9)) : new Color(255, 245, 190, (int) (al * 0.85)));
-                g.fill(p);
-            }
-        }
         if (!lobby) scenery.drawFront(g, camX, camY, fx);
         g.setTransform(base);
 
@@ -869,27 +995,21 @@ public class GamePanel extends JPanel {
         if (s.phase == Snapshot.LOBBY) {
             drawLobbyHud(g, s);
             drawChatBox(g);
+            drawEscMenu(g);
             g.dispose();
             return;
         }
-        boolean resultsUp = s.winner >= 0 && ((s.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0) || viewLeaderboardManual);
-        if (!resultsUp) drawHud(g, s); // the results table covers the HUD's place
-        if (showBoard && s.winner < 0) {
-            g.translate(vX0() + (vW() - MapData.W) / 2, vY0() + (vH() - MapData.H) / 2);
-            drawBoard(g, s);
-            g.setTransform(hudBase);
-        }
-        if (s.winner >= 0) {
-            g.translate(vX0(), vY0()); // the end screens lay themselves out inside a (0,0,vW,vH) window
-            boolean autoLb = (s.matchEndElapsedSec >= 60.0) || (victoryTimer >= 60.0);
-            if (autoLb || viewLeaderboardManual) {
-                drawPostMatchLeaderboard(g, s);
-            } else {
-                drawResponsiveVictory(g, s);
+        if (s.winner >= 0) drawEnding(g, s);
+        else {
+            drawHud(g, s);
+            if (showBoard) {
+                g.translate(vX0() + (vW() - MapData.W) / 2, vY0() + (vH() - MapData.H) / 2);
+                drawBoard(g, s);
+                g.setTransform(hudBase);
             }
-            g.setTransform(hudBase);
+            drawChatBox(g);
         }
-        if (s.winner < 0) drawChatBox(g);
+        drawEscMenu(g);
         g.dispose();
     }
 
@@ -901,13 +1021,24 @@ public class GamePanel extends JPanel {
             double[] xy = renderPos.get(p.id);
             if (xy == null || !p.alive) continue;
             Color c = p.team == 0 ? new Color(255, 175, 165) : new Color(185, 230, 255);
-            String label = p.name;
-            if (lobby) { // in the lobby the name also says who is ready and who is the host
+            String label = p.name, title = null;
+            if (lobby) { // in the lobby the name also says level, title, who is ready and who is the host
                 Protocol.LobbyEntry e = entry(p.id);
+                if (e != null) {
+                    label = "Lv " + e.level() + "  " + label;
+                    if (e.title() > 0 && e.title() < Profile.TITLES.length) title = Profile.TITLES[e.title()];
+                }
                 if (l != null && l.hostId() == p.id) label = "HOST  " + label;
                 if (e != null && e.ready()) { label += "  READY"; c = new Color(130, 245, 150); }
+                if (p.id == mvpId) { label += "  MVP"; if (e == null || !e.ready()) c = new Color(255, 225, 140); }
             }
             Art.namePlate(g, label, xy[0], xy[1] + 50, c);
+            if (title != null) {
+                Font keep = g.getFont();
+                g.setFont(Type.ui(10f, true));
+                Art.textCenter(g, title, xy[0] - 100, 200, xy[1] + 64, new Color(190, 170, 250));
+                g.setFont(keep);
+            }
         }
     }
 
@@ -949,7 +1080,7 @@ public class GamePanel extends JPanel {
     /** Lobby screen furniture: room labels, who you are, ready and start buttons, countdown and controls. */
     private void drawLobbyHud(Graphics2D g, Snapshot s) {
         Protocol.Lobby l = link.lobby();
-        room.drawLabels(g, l, nearLaptop(), s.countdown, time);
+        room.drawLabels(g, l, nearLaptop(), s.countdown, lastMatch, time);
         final double x0 = vX0(), y0 = vY0(), w = vW(), h = vH(), cx = x0 + w / 2;
         Snapshot.P me = find(s, myId);
         int mt = me == null ? 0 : me.team;
@@ -961,6 +1092,13 @@ public class GamePanel extends JPanel {
         int ping = link.pingMs();
         Art.text(g, "PING " + ping + "ms" + (link.lagSimOn() ? " LAG" : "") + (amHost() ? "   YOU ARE THE HOST" : ""),
             x0 + 28, y0 + 50, ping > 150 ? Color.ORANGE : new Color(170, 175, 195));
+        if (exits != null) {   // a visible way out for players who do not know about Esc
+            leaveBtn.setRect(x0 + 14, y0 + 68, 130, 30);
+            boolean hov = leaveBtn.contains(mouseX, mouseY) && esc == Esc.CLOSED;
+            Art.plate(g, leaveBtn.x, leaveBtn.y, leaveBtn.width, leaveBtn.height, 7, hov ? new Color(255, 150, 135) : new Color(150, 95, 110), time, false);
+            g.setFont(Type.ui(12.5f, true));
+            Art.textCenter(g, "←  LEAVE", leaveBtn.x, leaveBtn.width, leaveBtn.y + 20, hov ? Color.WHITE : new Color(230, 200, 205));
+        }
 
         double bw = 200, bh = 48, bx = x0 + w - bw - 18, by = y0 + h - bh - 18;
         boolean ready = amReady();
@@ -992,7 +1130,7 @@ public class GamePanel extends JPanel {
         drawFeed(g, x0, y0, h);
         if (!typing) {
             g.setFont(Type.ui(11.5f, false));
-            Art.textCenter(g, "WASD move   MOUSE shoot the targets   ENTER chat   R ready   E / C at the wardrobe   F11 fullscreen",
+            Art.textCenter(g, "WASD move   MOUSE shoot the targets   ENTER chat   R ready   E / C wardrobe   ESC menu",
                 x0, w - bw * 2 - 30, y0 + h - 10, new Color(235, 232, 255, 200));
         }
     }
@@ -1270,7 +1408,7 @@ public class GamePanel extends JPanel {
 
         // bottom left: compact controls guide
         g.setFont(Type.ui(11.5f, false));
-        if (!typing) Art.textCenter(g, "WASD move   MOUSE aim/fire   TAB scores   ENTER chat   F11 fullscreen   F fx " + (fx ? "on" : "off") + "   V shake " + (shakeOn ? "on" : "off") + "   L lag",
+        if (!typing) Art.textCenter(g, "WASD move   MOUSE aim/fire   TAB scores   ENTER chat   ESC menu   F11 fullscreen   F fx " + (fx ? "on" : "off") + "   V shake " + (shakeOn ? "on" : "off") + "   L lag",
             x0, w, y0 + h - 10, new Color(235, 232, 255, 200));
 
         drawFeed(g, x0, y0, h);
@@ -1356,472 +1494,321 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void drawResponsiveVictory(Graphics2D g, Snapshot s) {
-        int vw = (int) Math.round(vW());
-        int vh = (int) Math.round(vH());
+    // ---------- match ending: drawing (docs/ending-design.html) ----------
 
-        // Cinematic soft translucent dark veil (lets arena, players & fireworks shine through!)
-        g.setColor(new Color(4, 2, 14, 115));
-        g.fillRect(0, 0, vw, vh);
+    private final Map<String, Shape> wordShapes = new HashMap<>();   // VICTORY / DEFEAT outlines, built once
 
-        // Responsive glassy window dimensions with safe margins
-        int cardW = Math.min(520, Math.max(340, vw - 48));
-        int cardH = Math.min(270, Math.max(210, vh - 60));
-        int cardX = (vw - cardW) / 2;
-        int cardY = (vh - cardH) / 2;
-
-        int winner = s.winner;
-        Color violet = new Color(175, 75, 255);
-        Color accent = winner == 1 ? new Color(60, 220, 255) : new Color(255, 65, 115);
-
-        // 1. Expanding celestial shockwave rings
-        double maxRing = Math.min(vw, vh) * 0.65;
-        double ringR = (victoryTimer * 160) % maxRing;
-        float ringAlpha = (float) Math.max(0, 1.0 - ringR / maxRing);
-        Composite oldComp = g.getComposite();
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, ringAlpha * 0.7f));
-        g.setColor(violet);
-        g.setStroke(new BasicStroke(2.5f));
-        g.draw(new Ellipse2D.Double(vw / 2.0 - ringR, vh / 2.0 - ringR, ringR * 2, ringR * 2));
-        g.setComposite(oldComp);
-
-        // 2. Frosted transparent glassy window!
-        Art.glassCard(g, cardX, cardY, cardW, cardH, accent, time, fx, hoverPlayAgain);
-        btnPlayAgainBounds.setBounds(cardX + ox(), cardY + oy(), cardW, cardH);
-
-        // 3. Decorative mystical flame braziers at the outer sides of the glass window
-        Art.flameBrazier(g, cardX - 16, cardY + cardH - 14, accent, time, fx);
-        Art.flameBrazier(g, cardX + cardW + 16, cardY + cardH - 14, accent, time + 1.2, fx);
-
-        // 4. Rotating celestial aurora light rays and sacred runic halo behind "VICTORY"
-        double vicCenterX = cardX + cardW / 2.0;
-        double bob = Math.sin(time * 2.8) * 3;
-        double vicCenterY = cardY + cardH / 2.0 + bob;
-
-        if (fx) {
-            // Rotating sacred geometry runic halo behind "VICTORY"
-            Composite haloComp = g.getComposite();
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.22f));
-            g.setColor(accent);
-            Stroke haloSt = g.getStroke();
-            g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{6, 6}, (float)(time * 10 % 12)));
-            double haloR = cardH * 0.38;
-            g.draw(new Ellipse2D.Double(vicCenterX - haloR, vicCenterY - haloR, haloR * 2, haloR * 2));
-            g.setStroke(haloSt);
-            g.setComposite(haloComp);
-
-            // 12 rotating celestial aurora light rays radiating behind "VICTORY"
-            Composite rayComp = g.getComposite();
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.20f));
-            for (int i = 0; i < 12; i++) {
-                double rayAng = time * 0.30 + i * (Math.PI * 2 / 12);
-                double rayLen = cardW * 0.52;
-                Path2D.Double ray = new Path2D.Double();
-                ray.moveTo(vicCenterX, vicCenterY);
-                ray.lineTo(vicCenterX + Math.cos(rayAng - 0.08) * rayLen, vicCenterY + Math.sin(rayAng - 0.08) * rayLen);
-                ray.lineTo(vicCenterX + Math.cos(rayAng + 0.08) * rayLen, vicCenterY + Math.sin(rayAng + 0.08) * rayLen);
-                ray.closePath();
-                g.setPaint(new RadialGradientPaint(
-                    new Point2D.Double(vicCenterX, vicCenterY), (float) rayLen,
-                    new float[]{0f, 1f},
-                    new Color[]{new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 180), new Color(violet.getRed(), violet.getGreen(), violet.getBlue(), 0)}
-                ));
-                g.fill(ray);
-            }
-            g.setComposite(rayComp);
-
-            // Multilayered atmospheric glow behind "VICTORY"
-            Art.glow(g, violet, vicCenterX, vicCenterY, 90, 0.45f);
-            Art.glow(g, accent, vicCenterX, vicCenterY, 52, 0.70f);
-            Art.glow(g, Color.WHITE, vicCenterX, vicCenterY, 24, 0.85f);
-        }
-
-        // 5. Majestic display of the only word: "VICTORY"
-        String vicText = "VICTORY";
-        int fontSize = Math.min(74, Math.max(50, (int)(cardW * 0.175)));
-        Font vicFont = Type.heading(fontSize);
-        g.setFont(vicFont);
-        FontMetrics fm = g.getFontMetrics();
-        java.awt.font.TextLayout tl = new java.awt.font.TextLayout(vicText, vicFont, g.getFontRenderContext());
-        int strW = (int) Math.round(tl.getAdvance());
-        int strX = cardX + (cardW - strW) / 2;
-        int strY = (int) vicCenterY + fm.getAscent() / 2 - 4;
-        // drawn as vector outlines (kerned, letter-spaced), so the edges are smooth at any resolution
-        Shape letters = tl.getOutline(AffineTransform.getTranslateInstance(strX, strY));
-        g.setColor(new Color(6, 2, 14, 210)); // deep shadow
-        g.fill(AffineTransform.getTranslateInstance(0, 4.5).createTransformedShape(letters));
-        g.setStroke(new BasicStroke(3.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.setColor(new Color(120, 38, 214, 215)); // violet rim
-        g.draw(letters);
-        g.setPaint(new GradientPaint(strX, strY - fm.getAscent(), Color.WHITE, strX, strY + 2, accent)); // iridescent face
-        g.fill(letters);
-        g.setStroke(new BasicStroke(0.9f));
-        g.setColor(new Color(255, 255, 255, 170)); // specular edge
-        g.draw(letters);
-        g.setStroke(new BasicStroke(1f));
-
-        // Layer E: Sparkling diamond star glints on the letters
-        Art.starGlint(g, strX + fm.charWidth('V') * 0.25, strY - fm.getAscent() * 0.88, time, 8);
-        Art.starGlint(g, strX + strW * 0.52, strY - fm.getAscent() * 0.92, time + 1.3, 9);
-        Art.starGlint(g, strX + strW - fm.charWidth('Y') * 0.35, strY - fm.getAscent() * 0.88, time + 2.5, 8);
-
-        // Sleek interactive toggle button to view Match Statistics early or show countdown to auto-transition
-        int toggleW = Math.min(260, cardW - 60);
-        int toggleH = 28;
-        int toggleX = cardX + (cardW - toggleW) / 2;
-        int toggleY = Math.min(vh - 36, cardY + cardH + 10);
-        btnLeaderboardToggle.setBounds(toggleX + ox(), toggleY + oy(), toggleW, toggleH);
-
-        double elapsed = s.matchEndElapsedSec > 0 ? s.matchEndElapsedSec : victoryTimer;
-        int secRemaining = Math.max(0, (int) Math.ceil(60.0 - elapsed));
-        String toggleText = "STATS [TAB] (" + secRemaining + "s)";
-
-        Color tFill = hoverLeaderboardToggle ? new Color(255, 255, 255, 45) : new Color(20, 10, 35, 180);
-        Color tBorder = hoverLeaderboardToggle ? Color.WHITE : new Color(175, 75, 255, 140);
-        g.setColor(tFill);
-        g.fillRoundRect(toggleX, toggleY, toggleW, toggleH, 14, 14);
-        g.setColor(tBorder);
-        g.setStroke(new BasicStroke(hoverLeaderboardToggle ? 1.8f : 1.0f));
-        g.drawRoundRect(toggleX, toggleY, toggleW, toggleH, 14, 14);
-
-        g.setFont(Art.font(11));
-        Art.textCenter(g, toggleText, toggleX, toggleW, toggleY + 18, Color.WHITE);
+    private Shape word(String text, float size) {
+        return wordShapes.computeIfAbsent(text + size, k -> new java.awt.font.TextLayout(text, Type.logo(size),
+            new java.awt.font.FontRenderContext(null, true, true)).getOutline(null));
     }
 
-    private void drawPostMatchLeaderboard(Graphics2D g, Snapshot s) {
-        int vw = (int) Math.round(vW());
-        int vh = (int) Math.round(vH());
+    private static double ease(double t) { t = Math.max(0, Math.min(1, t)); return 1 - Math.pow(1 - t, 3); }
 
-        // Cinematic dark backdrop so fireworks and torches shine through softly
-        g.setColor(new Color(4, 2, 14, 175));
-        g.fillRect(0, 0, vw, vh);
+    private static Composite alpha(double a) { return AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, Math.min(1, a))); }
 
-        int cardW = Math.min(740, Math.max(340, vw - 36));
-        int cardH = Math.min(540, Math.max(380, vh - 36));
-        int cardX = (vw - cardW) / 2;
-        int cardY = (vh - cardH) / 2;
+    private void drawEnding(Graphics2D g, Snapshot s) {
+        final double x0 = vX0(), y0 = vY0(), w = vW(), h = vH();
+        backBtn.setRect(0, 0, 0, 0);
+        Composite keep = g.getComposite();
+        if (endT < END_FINAL) drawFinalMoment(g, endT, x0, y0, w, h);
+        else if (endT < END_RESULTS) drawVerdict(g, s, endT - END_FINAL, x0, y0, w, h);
+        else drawResults(g, s, endT - END_RESULTS, x0, y0, w, h);
+        g.setComposite(keep);
+    }
 
-        int winner = s.winner;
-        Color accent = winner == 1 ? new Color(60, 220, 255) : new Color(255, 65, 115);
+    /** 0-2 s: colour drains, film bars slide in, the scorer gets a gold ring, a banner names them; a white flash first. */
+    private void drawFinalMoment(Graphics2D g, double t, double x0, double y0, double w, double h) {
+        g.setColor(new Color(16, 12, 30, (int) (95 * ease(t / 0.3))));
+        g.fill(new Rectangle2D.Double(x0, y0, w, h));
+        double[] at = finalScorer >= 0 ? renderPos.get(finalScorer) : null;
+        if (at != null) {
+            double k = (t * 1.4) % 1, rx = 30 + 22 * k;
+            if (fx) Art.glow(g, GOLD, at[0], at[1], 70, 0.6f);
+            g.setStroke(new BasicStroke(3.5f));
+            g.setColor(new Color(255, 205, 90, (int) (255 * (1 - k))));
+            g.draw(new Ellipse2D.Double(at[0] - rx, at[1] + 22 - rx * 0.33, rx * 2, rx * 0.66));
+            g.setStroke(new BasicStroke(1));
+        }
+        double bar = h * 0.09 * ease(t / 0.25);
+        g.setColor(Color.BLACK);
+        g.fill(new Rectangle2D.Double(x0, y0, w, bar));
+        g.fill(new Rectangle2D.Double(x0, y0 + h - bar, w, bar));
 
-        // Glassmorphic main results window
-        Art.glassCard(g, cardX, cardY, cardW, cardH, accent, time, fx, false);
-
-        // 1. Header with Golden Crown and Match Results Title
-        Art.crown(g, cardX + cardW / 2.0, cardY + 22, Color.YELLOW, 22, time);
-
-        g.setFont(Type.display(Math.min(22, (int)(cardW * 0.045))));
-        String headerTitle = "MATCH RESULTS & BATTLE STATISTICS";
-        FontMetrics fmH = g.getFontMetrics();
-        int thX = cardX + (cardW - fmH.stringWidth(headerTitle)) / 2;
-        g.setColor(new Color(6, 2, 14, 220));
-        g.drawString(headerTitle, thX, cardY + 47);
+        double a = ease((t - 0.12) / 0.3), by = y0 + h * 0.36, bw = w * (0.55 + 0.25 * a);
+        g.setComposite(alpha(a));
+        double bx = x0 + (w - bw) / 2;
+        g.setPaint(new LinearGradientPaint((float) bx, 0, (float) (bx + bw), 0, new float[]{0f, .2f, .8f, 1f},
+            new Color[]{new Color(4, 4, 16, 0), new Color(4, 4, 16, 215), new Color(4, 4, 16, 215), new Color(4, 4, 16, 0)}));
+        g.fill(new Rectangle2D.Double(bx, by, bw, 104));
+        g.setPaint(new LinearGradientPaint((float) bx, 0, (float) (bx + bw), 0, new float[]{0f, .5f, 1f},
+            new Color[]{new Color(255, 205, 90, 0), GOLD, new Color(255, 205, 90, 0)}));
+        g.fill(new Rectangle2D.Double(bx + bw * 0.15, by, bw * 0.7, 2));
+        g.fill(new Rectangle2D.Double(bx + bw * 0.15, by + 102, bw * 0.7, 2));
+        g.setFont(Type.royal(46, true, 0.28f));
+        if (fx) Art.glow(g, GOLD, x0 + w / 2, by + 44, 160, 0.25f);
+        Art.textCenter(g, finalBanner, x0, w, by + 58, GOLD);
+        g.setFont(Type.hud(21, true, 0.14f));
+        Art.textCenter(g, finalSub, x0, w, by + 88, new Color(220, 214, 240));
+        g.setComposite(alpha(0.85 * (1 - t / 0.35)));   // the flash at the very first moment
         g.setColor(Color.WHITE);
-        g.drawString(headerTitle, thX, cardY + 46);
+        g.fill(new Rectangle2D.Double(x0, y0, w, h));
+    }
 
-        String verdict = (winner == 1 ? "BLUE" : "RED") + " TEAM TRIUMPHANT";
-        g.setFont(Type.ui(13, true));
-        FontMetrics fmV = g.getFontMetrics();
-        g.setColor(TEAM[winner]);
-        g.drawString(verdict, cardX + (cardW - fmV.stringWidth(verdict)) / 2, cardY + 64);
+    /** 2-7 s: VICTORY (gold rays, banners unroll, the crown drops) or DEFEAT (cold room, torn banners fall, ash). */
+    private void drawVerdict(Graphics2D g, Snapshot s, double t, double x0, double y0, double w, double h) {
+        boolean won = won();
+        int winner = s.winner, side = won ? winner : 1 - winner;
+        double cx = x0 + w / 2, a0 = ease(t / 0.35);
+        g.setComposite(alpha(a0));
+        g.setPaint(new RadialGradientPaint(new Point2D.Double(cx, y0 + h * 0.45), (float) (Math.max(w, h) * 0.75), new float[]{0f, 1f},
+            won ? new Color[]{new Color(74, 34, 16), new Color(8, 4, 10)} : new Color[]{new Color(26, 34, 54), new Color(4, 5, 10)}));
+        g.fill(new Rectangle2D.Double(x0, y0, w, h));
+        if (won) {   // slowly turning rays of light
+            AffineTransform k = g.getTransform();
+            g.translate(cx, y0 + h * 0.42);
+            g.rotate(time * 0.12);
+            g.setColor(new Color(255, 205, 90, 26));
+            double r = Math.max(w, h);
+            for (int i = 0; i < 20; i++) {
+                double a1 = i * Math.PI * 2 / 20, a2 = a1 + 0.12;
+                Path2D.Double wedge = new Path2D.Double();
+                wedge.moveTo(0, 0); wedge.lineTo(Math.cos(a1) * r, Math.sin(a1) * r); wedge.lineTo(Math.cos(a2) * r, Math.sin(a2) * r); wedge.closePath();
+                g.fill(wedge);
+            }
+            g.setTransform(k);
+        }
+        for (int dir = -1; dir <= 1; dir += 2) {   // a team banner on each side
+            AffineTransform k = g.getTransform();
+            double bx = cx + dir * w * 0.33, bwid = 96, len = h * 0.52;
+            g.translate(bx, y0);
+            if (won) len *= ease((t - 0.1) / 0.8);
+            else {
+                double fall = Math.max(0, t - 0.5);
+                g.rotate(-dir * Math.min(0.45, fall * 0.4));
+                g.translate(0, fall * fall * 120);
+                g.setComposite(alpha(a0 * Math.max(0, 1 - fall / 3)));
+            }
+            Color c = TEAM[side];
+            if (!won) c = new Color(c.getRed() / 2 + 20, c.getGreen() / 2 + 25, c.getBlue() / 2 + 40);
+            g.setPaint(new GradientPaint(0, 0, c, 0, (float) Math.max(1, len), c.darker().darker()));
+            Path2D.Double b = new Path2D.Double();
+            b.moveTo(-bwid / 2, 0); b.lineTo(bwid / 2, 0);
+            if (won) { b.lineTo(bwid / 2, len); b.lineTo(0, len - 30); b.lineTo(-bwid / 2, len); }
+            else {   // torn edge
+                b.lineTo(bwid / 2, len * 0.7); b.lineTo(bwid * 0.3, len * 0.78); b.lineTo(bwid * 0.38, len * 0.9); b.lineTo(bwid * 0.05, len);
+                b.lineTo(-bwid * 0.12, len * 0.82); b.lineTo(-bwid * 0.3, len * 0.95); b.lineTo(-bwid / 2, len * 0.74);
+            }
+            b.closePath();
+            g.fill(b);
+            g.setColor(won ? GOLD : new Color(130, 120, 90));
+            g.fill(new Rectangle2D.Double(-bwid / 2, 0, bwid, 10));
+            g.setTransform(k);
+            g.setComposite(alpha(a0));
+        }
+        drawEndFx(g, x0, y0, w, h, won);
+        if (won) {   // the crown drops in with a bounce
+            double k = (t - 0.2) / 0.55, drop = k >= 1 ? 0 : (1 - ease(k)) * -420 + Math.sin(Math.min(1, Math.max(0, k)) * Math.PI) * 18;
+            MenuScreen.crown(g, cx, y0 + h * 0.24 + drop, 1.5);
+        }
+        Shape word = word(won ? "VICTORY" : "DEFEAT", 118);
+        Rectangle2D wb = word.getBounds2D();
+        double wa = ease((t - 0.3) / 0.45), sc = won ? 1 + 0.45 * (1 - wa) : 1;
+        double wy = y0 + h * 0.47 + (won ? 0 : -40 * (1 - wa)) + (!won && t > 0.75 && t < 1.0 ? Math.sin(t * 90) * 4 : 0);
+        AffineTransform k = g.getTransform();
+        g.translate(cx, wy);
+        g.scale(sc, sc);
+        g.translate(-wb.getCenterX(), -wb.getCenterY());
+        g.setComposite(alpha(wa));
+        if (won && fx) Art.glow(g, new Color(255, 190, 80), wb.getCenterX(), wb.getCenterY(), 260, 0.35f);
+        AffineTransform k2 = g.getTransform();
+        g.translate(0, 6);
+        g.setColor(won ? new Color(94, 61, 12) : new Color(20, 27, 42));
+        g.fill(word);
+        g.setTransform(k2);
+        g.setPaint(new LinearGradientPaint(0, (float) wb.getMinY(), 0, (float) wb.getMaxY(), new float[]{0f, .45f, 1f},
+            won ? new Color[]{new Color(255, 248, 225), GOLD, new Color(185, 130, 42)} : new Color[]{new Color(230, 238, 252), new Color(159, 179, 214), new Color(77, 95, 128)}));
+        g.fill(word);
+        g.setTransform(k);
 
-        // Aggregate authoritative team statistics
-        int[] teamKills = new int[2], teamDeaths = new int[2], teamCaps = new int[2];
-        for (Snapshot.P p : s.players) {
-            if (p.team >= 0 && p.team < 2) {
-                teamKills[p.team] += p.tags;
-                teamDeaths[p.team] += p.deaths;
-                teamCaps[p.team] += p.captures;
+        double sa = ease((t - 0.9) / 0.4), sy = y0 + h * 0.70;
+        g.setComposite(alpha(sa));
+        Color red = won || winner == 0 ? new Color(255, 155, 140) : new Color(185, 160, 160), blue = new Color(156, 202, 255);
+        g.setFont(Type.hud(44, true, 0.02f));
+        Art.textCenter(g, s.score[0] + "", cx - 120, 80, sy, red);
+        Art.textCenter(g, s.score[1] + "", cx + 40, 80, sy, blue);
+        Art.textCenter(g, "—", cx - 40, 80, sy - 4, new Color(143, 138, 168));
+        g.setFont(Type.royal(18, true, 0.3f));
+        Art.textCenter(g, "RED", cx - 260, 140, sy - 10, red);
+        Art.textCenter(g, "BLUE", cx + 120, 140, sy - 10, blue);
+        g.setFont(Type.royal(17, true, 0.3f));
+        Art.textCenter(g, won ? "THE THRONE IS YOURS" : "THE THRONE HAS FALLEN", x0, w, y0 + h * 0.80, won ? new Color(255, 241, 196) : new Color(143, 166, 200));
+    }
+
+    private void drawEndFx(Graphics2D g, double x0, double y0, double w, double h, boolean won) {
+        for (double[] e : endFx) {
+            double a = 0.5 + 0.5 * Math.sin(e[3] * 2);
+            g.setColor(won ? new Color(255, 190 + (int) (40 * a), 90, (int) (220 * a)) : new Color(170, 180, 200, (int) (140 * a)));
+            double x = x0 + (e[0] + Math.sin(e[3]) * (won ? 0.006 : 0.02)) * w, y = y0 + e[1] * h, r = won ? 2.4 : 3;
+            g.fill(new Ellipse2D.Double(x - r, y - r, r * 2, r * 2));
+        }
+    }
+
+    /** 7 s on: one card for everyone. Awards, both teams' stats, and the vote to go back to the lobby. */
+    private void drawResults(Graphics2D g, Snapshot s, double t, double x0, double y0, double w, double h) {
+        g.setColor(new Color(6, 4, 14, (int) (235 * ease(t / 0.3))));
+        g.fill(new Rectangle2D.Double(x0, y0, w, h));
+        g.setComposite(alpha(ease(t / 0.35)));
+        int[] n = new int[2];
+        for (Snapshot.P p : s.players) n[Math.max(0, Math.min(1, p.team))]++;
+        int perTeam = Math.max(1, Math.max(n[0], n[1]));
+        double cw = Math.min(w - 60, 1000), ch = Math.min(h - 40, 370 + perTeam * 36), px = x0 + (w - cw) / 2, py = y0 + (h - ch) / 2, pad = 34;
+        Art.plate(g, px, py, cw, ch, 22, new Color(255, 205, 90, 170), time, fx);
+        g.setFont(Type.logo(36));
+        Art.text(g, "Match results", px + pad, py + 58, GOLD);
+        int len = roundStartLeft > 0 ? Math.max(0, roundStartLeft - s.timeLeftSec) : -1;
+        String meta = perTeam + "v" + perTeam + (len >= 0 ? "   ·   " + len / 60 + ":" + String.format("%02d", len % 60) : "")
+            + "   ·   " + TEAM_NAME[s.winner] + " WINS " + s.score[s.winner] + " - " + s.score[1 - s.winner];
+        g.setFont(Type.hud(17, true, 0.1f));
+        Art.text(g, meta, px + cw - pad - g.getFontMetrics().stringWidth(meta) - 8, py + 52, new Color(143, 138, 168));
+
+        Snapshot.P mvp = best(s, RANK), runner = best(s, Comparator.comparingInt(p -> -p.captures)), shot = best(s, Comparator.comparingInt(p -> -p.tags));
+        String[][] award = {
+            {"MVP", mvp == null ? "—" : mvp.name, mvp == null ? "" : mvp.score + " points"},
+            {"FLAG RUNNER", runner == null || runner.captures == 0 ? "—" : runner.name, runner == null || runner.captures == 0 ? "no captures" : runner.captures + (runner.captures == 1 ? " capture" : " captures")},
+            {"SHARPSHOOTER", shot == null || shot.tags == 0 ? "—" : shot.name, shot == null || shot.tags == 0 ? "no tags" : shot.tags + (shot.tags == 1 ? " tag" : " tags")}};
+        double aw = (cw - 2 * pad - 2 * 18) / 3, ay = py + 84;
+        for (int i = 0; i < 3; i++) {
+            double ax = px + pad + i * (aw + 18), pop = ease((t - 0.2 - i * 0.15) / 0.3);
+            Composite k = g.getComposite();
+            g.setComposite(alpha(pop * ease(t / 0.35)));
+            g.setColor(new Color(255, 205, 90, 16));
+            g.fill(new Rectangle2D.Double(ax, ay, aw, 74));
+            g.setColor(new Color(255, 205, 90, 70));
+            g.draw(new Rectangle2D.Double(ax, ay, aw, 74));
+            double ix = ax + 36, iy = ay + 38;
+            if (i == 0) MenuScreen.crown(g, ix, iy + 10, 0.5);
+            else if (i == 1) Art.flagIcon(g, ix, iy, 34, TEAM[0], time);
+            else {
+                g.setColor(new Color(60, 200, 255));
+                g.setStroke(new BasicStroke(2.5f));
+                g.draw(new Ellipse2D.Double(ix - 15, iy - 15, 30, 30));
+                g.draw(new Ellipse2D.Double(ix - 5, iy - 5, 10, 10));
+                g.draw(new Line2D.Double(ix, iy - 21, ix, iy - 10)); g.draw(new Line2D.Double(ix, iy + 10, ix, iy + 21));
+                g.draw(new Line2D.Double(ix - 21, iy, ix - 10, iy)); g.draw(new Line2D.Double(ix + 10, iy, ix + 21, iy));
+                g.setStroke(new BasicStroke(1));
+            }
+            g.setFont(Type.hud(13, true, 0.2f));
+            Art.text(g, award[i][0], ax + 72, ay + 22, new Color(170, 150, 235));
+            g.setFont(Type.royal(21, true, 0.08f));
+            Art.text(g, award[i][1].toUpperCase(), ax + 72, ay + 46, Color.WHITE);
+            g.setFont(Type.hud(14, false, 0.04f));
+            Art.text(g, award[i][2], ax + 72, ay + 64, new Color(143, 138, 168));
+            g.setComposite(k);
+        }
+
+        double colW = (cw - 2 * pad - 30) / 2, ty = ay + 112;
+        for (int team = 0; team < 2; team++) {
+            double tx = px + pad + team * (colW + 30);
+            Color tc = team == 0 ? new Color(255, 155, 140) : new Color(156, 202, 255);
+            g.setFont(Type.royal(22, true, 0.16f));
+            Art.text(g, TEAM_NAME[team], tx, ty, tc);
+            if (team == s.winner) {
+                g.setFont(Type.hud(12, true, 0.2f));
+                double wx = tx + g.getFontMetrics(Type.royal(22, true, 0.16f)).stringWidth(TEAM_NAME[team]) + 16;
+                g.setColor(new Color(255, 205, 90, 140));
+                g.draw(new Rectangle2D.Double(wx, ty - 15, 64, 19));
+                Art.text(g, "WINNER", wx + 7, ty, GOLD);
+            }
+            g.setFont(Type.hud(32, true, 0f));
+            Art.text(g, s.score[team] + "", tx + colW - 22, ty + 4, tc);
+            double ry = ty + 30;
+            g.setFont(Type.hud(12, true, 0.16f));
+            Color hc = new Color(143, 138, 168);
+            Art.text(g, "PLAYER", tx + 40, ry, hc);
+            String[] cols = {"C", "T", "D", "PTS"};
+            double[] cx = {colW - 190, colW - 140, colW - 90, colW - 30};
+            for (int c = 0; c < 4; c++) Art.textCenter(g, cols[c], tx + cx[c] - 20, 40, ry, hc);
+            g.setColor(new Color(110, 95, 160, 120));
+            g.fill(new Rectangle2D.Double(tx, ry + 8, colW, 1));
+            List<Snapshot.P> rows = new ArrayList<>();
+            for (Snapshot.P p : s.players) if (p.team == team) rows.add(p);
+            rows.sort(RANK);
+            for (Snapshot.P p : rows) {
+                ry += 36;
+                if (mvp != null && p.id == mvp.id) {
+                    g.setPaint(new GradientPaint((float) tx, 0, new Color(255, 205, 90, 45), (float) (tx + colW), 0, new Color(255, 205, 90, 0)));
+                    g.fill(new Rectangle2D.Double(tx, ry - 24, colW, 34));
+                    MenuScreen.crown(g, tx + 16, ry - 4, 0.3);
+                } else {
+                    g.setColor(TEAM[team]);
+                    g.fill(new Ellipse2D.Double(tx + 9, ry - 15, 14, 14));
+                }
+                g.setFont(Type.royal(17, true, 0.06f));
+                Art.text(g, p.name.toUpperCase(), tx + 40, ry, Color.WHITE);
+                double nw = g.getFontMetrics().stringWidth(p.name.toUpperCase());
+                Protocol.LobbyEntry le = entry(p.id);
+                g.setFont(Type.hud(12, true, 0.2f));
+                String extra = (le != null ? "LV " + le.level() + "   " : "") + (p.id == myId ? "YOU" : "");
+                Art.text(g, extra, tx + 50 + nw, ry, new Color(170, 150, 235));
+                g.setFont(Type.hud(18, true, 0f));
+                int[] v = {p.captures, p.tags, p.deaths, p.score};
+                for (int c = 0; c < 4; c++) Art.textCenter(g, v[c] + "", tx + cx[c] - 20, 40, ry, c == 3 ? new Color(255, 241, 196) : new Color(200, 196, 225));
+                g.setColor(new Color(110, 95, 160, 70));
+                g.fill(new Rectangle2D.Double(tx, ry + 10, colW, 1));
             }
         }
 
-        // 2. Team Comparison Cards (Side-by-side or stacked on tiny viewports)
-        boolean sideBySide = cardW >= 480;
-        int teamY = cardY + 74;
-        int teamH = sideBySide ? 76 : 60;
-        int teamW = sideBySide ? (cardW - 32) / 2 : cardW - 24;
+        // what this match did for your profile: XP, level up, achievements
+        double fy = py + ch - 40;
+        if (!news.isEmpty()) {
+            g.setFont(Type.hud(17, true, 0.12f));
+            Art.textCenter(g, String.join("     ·     ", news), px, cw, fy - 50, GOLD);
+        }
 
-        for (int t = 0; t < 2; t++) {
-            int tx = sideBySide ? (t == 0 ? cardX + 12 : cardX + 20 + teamW) : cardX + 12;
-            int ty = sideBySide ? teamY : teamY + t * 64;
-
-            boolean won = t == winner;
-            Color tc = TEAM[t];
-            Color fillC = won ? new Color(tc.getRed(), tc.getGreen(), tc.getBlue(), 35) : new Color(20, 15, 35, 120);
-            Color borderC = won ? tc : new Color(80, 70, 100, 160);
-
-            g.setColor(fillC);
-            g.fillRoundRect(tx, ty, teamW, teamH, 12, 12);
-            g.setColor(borderC);
-            g.setStroke(new BasicStroke(won ? 2.0f : 1.0f));
-            g.drawRoundRect(tx, ty, teamW, teamH, 12, 12);
-
-            if (won) {
-                Art.crown(g, tx + 18, ty + 18, Color.YELLOW, 16, time);
-            }
-
-            g.setFont(Type.ui(13, true));
-            g.setColor(tc);
-            g.drawString(TEAM_NAME[t] + " TEAM" + (won ? "  * WINNER" : ""), tx + (won ? 32 : 14), ty + 20);
-
-            // Team Score badge
-            String scoreStr = "SCORE: " + s.score[t];
-            g.setFont(Type.ui(13, true));
-            g.setColor(Color.WHITE);
-            g.drawString(scoreStr, tx + teamW - g.getFontMetrics().stringWidth(scoreStr) - 14, ty + 20);
-
-            // Metrics row: KILLS, DEATHS, CAPTURES
-            g.setFont(Type.ui(11, false));
-            int colW = (teamW - 24) / 3;
-            String[] labels = {"KILLS", "DEATHS", "CAPTURES"};
-            int[] vals = {teamKills[t], teamDeaths[t], teamCaps[t]};
-            for (int m = 0; m < 3; m++) {
-                int cx = tx + 12 + m * colW;
-                g.setColor(new Color(160, 165, 185));
-                g.drawString(labels[m], cx, ty + 42);
-                g.setFont(Type.ui(15, true));
-                g.setColor(Color.WHITE);
-                g.drawString(String.valueOf(vals[m]), cx, ty + 62);
-                g.setFont(Type.ui(11, false));
+        // the vote to go back: a tick per player who pressed BACK TO LOBBY, and the seconds left before it happens anyway
+        Protocol.Lobby l = link.lobby();
+        int votes = 0, total = 0;
+        boolean mine = false;
+        if (l != null) for (Protocol.LobbyEntry e : l.entries()) { total++; if (e.ready()) { votes++; if (e.id() == myId) mine = true; } }
+        g.setFont(Type.hud(16, true, 0.1f));
+        Art.text(g, "BACK TO LOBBY", px + pad, fy + 6, new Color(200, 196, 225));
+        double tkx = px + pad + 150;
+        for (int i = 0; i < total; i++, tkx += 30) {
+            boolean on = i < votes;
+            Rectangle2D.Double box = new Rectangle2D.Double(tkx, fy - 12, 22, 22);
+            g.setColor(on ? new Color(110, 230, 130, 50) : new Color(0, 0, 0, 0));
+            g.fill(box);
+            g.setColor(on ? new Color(110, 230, 130) : new Color(170, 150, 235, 110));
+            g.draw(box);
+            if (on) {
+                g.setStroke(new BasicStroke(2.4f));
+                g.draw(new Line2D.Double(tkx + 5, fy, tkx + 9, fy + 5));
+                g.draw(new Line2D.Double(tkx + 9, fy + 5, tkx + 17, fy - 6));
+                g.setStroke(new BasicStroke(1));
             }
         }
+        Art.text(g, votes + "/" + total + " READY", tkx + 8, fy + 6, new Color(200, 196, 225));
 
-        // 3. Individual Player Performance Table
-        int tableY = cardY + (sideBySide ? 162 : 210);
-        int tableX = cardX + 12;
-        int tableW = cardW - 24;
-
-        // Header strip
-        g.setColor(new Color(25, 16, 44, 210));
-        g.fillRoundRect(tableX, tableY, tableW, 26, 8, 8);
-        g.setColor(new Color(100, 70, 140, 150));
-        g.setStroke(new BasicStroke(1.0f));
-        g.drawRoundRect(tableX, tableY, tableW, 26, 8, 8);
-
-        g.setFont(Type.ui(11, true));
-        g.setColor(new Color(210, 205, 235));
-        int cRank = tableX + 8;
-        int cPlayer = tableX + 64;
-        int cTeam = tableX + (int)(tableW * 0.44);
-        int cScore = tableX + (int)(tableW * 0.58);
-        int cKills = tableX + (int)(tableW * 0.70);
-        int cDeaths = tableX + (int)(tableW * 0.81);
-        int cCaps = tableX + (int)(tableW * 0.91);
-
-        g.drawString("RANK", cRank, tableY + 17);
-        g.drawString("PLAYER", cPlayer, tableY + 17);
-        g.drawString("TEAM", cTeam, tableY + 17);
-        g.drawString("SCORE", cScore, tableY + 17);
-        g.drawString("KILLS", cKills, tableY + 17);
-        g.drawString("DEATHS", cDeaths, tableY + 17);
-        g.drawString("CAPTURES", cCaps, tableY + 17);
-
-        // Sort players according to strict ranking rules:
-        // 1. Score descending, 2. Captures descending, 3. Kills descending, 4. Deaths ascending
-        List<Snapshot.P> ranked = new ArrayList<>(Arrays.asList(s.players));
-        ranked.sort((a, b) -> {
-            if (b.score != a.score) return Integer.compare(b.score, a.score);
-            if (b.captures != a.captures) return Integer.compare(b.captures, a.captures);
-            if (b.tags != a.tags) return Integer.compare(b.tags, a.tags);
-            return Integer.compare(a.deaths, b.deaths);
-        });
-
-        int rowH = 28;
-        int maxRows = Math.min(ranked.size(), (cardH - (tableY - cardY) - 58) / rowH);
-        for (int i = 0; i < maxRows; i++) {
-            Snapshot.P p = ranked.get(i);
-            int ry = tableY + 30 + i * (rowH + 2);
-            int rank = i + 1;
-
-            // Row background
-            Color rowBg = (i % 2 == 0) ? new Color(20, 14, 38, 120) : new Color(30, 20, 52, 100);
-            if (rank == 1) rowBg = new Color(255, 215, 0, 25);
-            else if (rank == 2) rowBg = new Color(200, 220, 255, 20);
-            else if (rank == 3) rowBg = new Color(205, 127, 50, 20);
-
-            g.setColor(rowBg);
-            g.fillRoundRect(tableX, ry, tableW, rowH, 6, 6);
-
-            // Rank medal badge
-            Art.medalBadge(g, cRank, ry + 3, rank);
-
-            // Player name with (YOU) indicator
-            g.setFont(Type.ui(12, true));
-            boolean isMe = (p.id == myId);
-            g.setColor(isMe ? Color.WHITE : new Color(220, 225, 240));
-            String pName = p.name + (isMe ? " (YOU)" : "");
-            g.drawString(pName, cPlayer, ry + 19);
-
-            // Team tag
-            g.setFont(Type.ui(11, true));
-            g.setColor(TEAM[p.team]);
-            g.drawString(p.team == 0 ? "RED" : "BLUE", cTeam, ry + 19);
-
-            // Score
-            g.setFont(Type.ui(12, true));
-            g.setColor(new Color(255, 235, 140));
-            g.drawString(String.valueOf(p.score), cScore, ry + 19);
-
-            // Kills, Deaths, Captures
-            g.setFont(Type.ui(12, false));
-            g.setColor(Color.WHITE);
-            g.drawString(String.valueOf(p.tags), cKills, ry + 19);
-            g.drawString(String.valueOf(p.deaths), cDeaths, ry + 19);
-            g.drawString(String.valueOf(p.captures), cCaps, ry + 19);
-        }
-
-        // 4. Action Buttons (PLAY AGAIN / REMATCH, VIEW CELEBRATION)
-        int btnH = 34;
-        int btnW = Math.min(200, (cardW - 40) / 2);
-        int btnY = cardY + cardH - 46;
-
-        int btn1X = cardX + (cardW - (btnW * 2 + 16)) / 2;
-        int btn2X = btn1X + btnW + 16;
-        btnLeaderboardPlayAgain.setBounds(btn1X + ox(), btnY + oy(), btnW, btnH);
-        btnLeaderboardBack.setBounds(btn2X + ox(), btnY + oy(), btnW, btnH);
-
-        // Button 1: Play Again
-        Color b1Fill = hoverLeaderboardPlayAgain ? new Color(130, 50, 210, 230) : new Color(60, 25, 100, 200);
-        Color b1Border = hoverLeaderboardPlayAgain ? Color.WHITE : new Color(180, 80, 255);
-        g.setColor(b1Fill);
-        g.fillRoundRect(btn1X, btnY, btnW, btnH, 16, 16);
-        g.setColor(b1Border);
-        g.setStroke(new BasicStroke(hoverLeaderboardPlayAgain ? 2.0f : 1.2f));
-        g.drawRoundRect(btn1X, btnY, btnW, btnH, 16, 16);
-        g.setFont(Type.ui(13, true));
-        Art.textCenter(g, "BACK TO LOBBY", btn1X, btnW, btnY + 22, Color.WHITE);
-
-        // Button 2: View Celebration
-        Color b2Fill = hoverLeaderboardBack ? new Color(255, 255, 255, 45) : new Color(255, 255, 255, 18);
-        Color b2Border = hoverLeaderboardBack ? Color.WHITE : new Color(180, 180, 210, 120);
-        g.setColor(b2Fill);
-        g.fillRoundRect(btn2X, btnY, btnW, btnH, 16, 16);
-        g.setColor(b2Border);
-        g.setStroke(new BasicStroke(hoverLeaderboardBack ? 2.0f : 1.0f));
-        g.drawRoundRect(btn2X, btnY, btnW, btnH, 16, 16);
-        Art.textCenter(g, "< CELEBRATION", btn2X, btnW, btnY + 22, Color.WHITE);
-    }
-
-    private void triggerOpeningCelebration(int winner) {
-        double wx = vX0(), wy = vY0(), vw = vW(), vh = vH();
-        Color teamC = TEAM[winner];
-        Color purple = new Color(170, 60, 255);
-        burst(wx + vw / 2, wy + vh / 2, purple, 70, 340);
-        burst(wx + vw / 2, wy + vh / 2, teamC, 60, 300);
-        burst(wx + vw / 2, wy + vh / 2, new Color(255, 200, 90), 50, 380);
-        ring(wx + vw / 2, wy + vh / 2 - 10, winner, 1.4, 260);
-        for (int i = 0; i < 9; i++) // an opening salvo across the whole width
-            launchRocket(wx + vw * (0.08 + 0.84 * i / 8.0), wy + vh, (i - 4) * 14, -470 - rnd.nextDouble() * 120, winner);
-        nextRocketTime = 0.7;
-    }
-
-    private void launchRocket(double x, double y, double vx, double vy, int team) {
-        FireworkRocket r = new FireworkRocket();
-        r.x = x; r.y = y; r.vx = vx; r.vy = vy;
-        r.fuse = 0.75 + rnd.nextDouble() * 0.5;
-        r.team = team;
-        double k = rnd.nextDouble();
-        r.c = k < 0.34 ? new Color(170, 70, 255) : k < 0.67 ? (team == 1 ? new Color(60, 220, 255) : new Color(255, 70, 90)) : new Color(255, 190, 80);
-        rockets.add(r);
-    }
-
-    /** Fireworks keep going for the whole victory screen; fire rises along the bottom and beside the card. */
-    private void stepCelebration(double dt, int winner) {
-        double vw = vW(), vh = vH(), wx = vX0(), wy = vY0();
-
-        if (victoryTimer < 58.0 && victoryTimer >= nextRocketTime) {
-            nextRocketTime += 0.14 + rnd.nextDouble() * 0.22;
-            int n = 1 + rnd.nextInt(3);
-            for (int i = 0; i < n; i++)
-                launchRocket(wx + vw * (0.06 + rnd.nextDouble() * 0.88), wy + vh, (rnd.nextDouble() - 0.5) * 120, -430 - rnd.nextDouble() * 170, winner);
-        }
-
-        for (Iterator<FireworkRocket> it = rockets.iterator(); it.hasNext(); ) {
-            FireworkRocket r = it.next();
-            r.fuse -= dt;
-            r.x += r.vx * dt;
-            r.y += r.vy * dt;
-            r.vy += 90 * dt;
-            addSpark(r.x, r.y, (rnd.nextDouble() - 0.5) * 24, rnd.nextDouble() * 40 + 10, 0.35, new Color(255, 220, 150), 3);
-            addSpark(r.x, r.y, (rnd.nextDouble() - 0.5) * 24, rnd.nextDouble() * 40 + 10, 0.25, r.c, 2);
-            if (r.fuse <= 0) {
-                detonateRocket(r);
-                it.remove();
-            }
-        }
-
-        for (Iterator<FireworkSpark> it = sparks.iterator(); it.hasNext(); ) {
-            FireworkSpark s = it.next();
-            s.life -= dt;
-            s.x += s.vx * dt;
-            s.y += s.vy * dt;
-            s.vy += 85 * dt;
-            s.vx *= 0.975;
-            if (s.life <= 0) it.remove();
-        }
-
-        // a wall of fire along the bottom of the screen, in orange, red, gold and the winners' colour
-        Color teamC = winner == 1 ? new Color(60, 220, 255) : new Color(255, 70, 90);
-        Color[] fire = {new Color(255, 120, 30), new Color(255, 70, 30), new Color(255, 120, 30), new Color(255, 190, 60), teamC, new Color(170, 60, 255)};
-        int spawn = (int) Math.ceil(dt * 200);
-        for (int i = 0; i < spawn; i++)
-            addFlame(wx + rnd.nextDouble() * vw, wy + vh + 6, (rnd.nextDouble() - 0.5) * 30, -90 - rnd.nextDouble() * 120,
-                0.8 + rnd.nextDouble() * 1.0, fire[rnd.nextInt(fire.length)], 13 + rnd.nextInt(14));
-        int cardW = (int) Math.min(520, Math.max(340, vw - 48)), cardH = (int) Math.min(380, Math.max(260, vh - 56));
-        double cardX = (vw - cardW) / 2 + wx, cardY = (vh - cardH) / 2 + wy;
-        for (int i = 0; i < Math.max(1, spawn / 2); i++) { // tall columns of flame on both sides of the victory panel
-            double side = rnd.nextBoolean() ? cardX - 18 : cardX + cardW + 18;
-            addFlame(side + (rnd.nextDouble() - 0.5) * 22, cardY + cardH - 14, (rnd.nextDouble() - 0.5) * 24, -70 - rnd.nextDouble() * 110,
-                0.7 + rnd.nextDouble() * 0.8, rnd.nextBoolean() ? new Color(170, 60, 255) : teamC, 10 + rnd.nextInt(10));
-        }
-        // embers drifting up across the whole view
-        if (rnd.nextInt(2) == 0) addSpark(wx + rnd.nextDouble() * vw, wy + vh, (rnd.nextDouble() - 0.5) * 40, -120 - rnd.nextDouble() * 140, 1.6, new Color(255, 170, 70), 3);
-
-        for (Iterator<MagicalFlame> it = flames.iterator(); it.hasNext(); ) {
-            MagicalFlame f = it.next();
-            f.life -= dt;
-            f.x += (f.vx + Math.sin(time * 6 + f.y * 0.05) * 14) * dt;
-            f.y += f.vy * dt;
-            if (f.life <= 0) it.remove();
-        }
-    }
-
-    private void addSpark(double x, double y, double vx, double vy, double life, Color c, int size) {
-        if (sparks.size() >= 1500) return;
-        FireworkSpark s = new FireworkSpark();
-        s.x = x; s.y = y; s.vx = vx; s.vy = vy; s.life = s.max = life; s.c = c; s.size = size;
-        sparks.add(s);
-    }
-
-    private void addFlame(double x, double y, double vx, double vy, double life, Color c, int size) {
-        if (flames.size() >= 420) return;
-        MagicalFlame f = new MagicalFlame();
-        f.x = x; f.y = y; f.vx = vx; f.vy = vy; f.life = f.max = life; f.c = c; f.size = size;
-        flames.add(f);
-    }
-
-    /** Peony, ring, double ring and willow bursts, each in the winners' colours plus violet, gold and white. */
-    private void detonateRocket(FireworkRocket r) {
-        Sfx.play("firework");
-        Color primary = r.c;
-        Color secondary = r.team == 1 ? new Color(60, 220, 255) : new Color(255, 60, 100);
-        Color violet = new Color(190, 70, 255), gold = new Color(255, 205, 90);
-        int kind = rnd.nextInt(4);
-        int count = kind == 1 ? 64 : 100 + rnd.nextInt(50);
-        double speed = 160 + rnd.nextDouble() * 120;
-        for (int i = 0; i < count; i++) {
-            double ang = kind == 1 ? i * Math.PI * 2 / count : rnd.nextDouble() * Math.PI * 2;
-            double spd = kind == 1 ? speed : 50 + rnd.nextDouble() * speed * 1.4;
-            Color sc = rnd.nextInt(4) == 0 ? Color.WHITE : rnd.nextInt(3) == 0 ? gold : rnd.nextBoolean() ? primary : (rnd.nextBoolean() ? secondary : violet);
-            double life = kind == 3 ? 1.3 + rnd.nextDouble() * 0.8 : 0.7 + rnd.nextDouble() * 0.7; // willow: long falling trails
-            addSpark(r.x, r.y, Math.cos(ang) * spd, Math.sin(ang) * spd, life, sc, 3 + rnd.nextInt(3));
-        }
-        if (kind == 2) for (int i = 0; i < 40; i++) { // inner ring
-            double ang = i * Math.PI * 2 / 40;
-            addSpark(r.x, r.y, Math.cos(ang) * speed * 0.5, Math.sin(ang) * speed * 0.5, 0.9, gold, 4);
-        }
-        ring(r.x, r.y - 10, r.team, 0.5, 70);
-        if (blooms.size() < 14) blooms.add(new Object[]{r.x, r.y, primary, 0.0});
+        double left = Math.max(0, END_RETURN - endT), bw = 230, bx = px + cw - pad - bw, rcx = bx - 34;
+        g.setStroke(new BasicStroke(3f));
+        g.setColor(new Color(255, 205, 90, 45));
+        g.draw(new Ellipse2D.Double(rcx - 20, fy - 21, 40, 40));
+        g.setColor(GOLD);
+        g.draw(new Arc2D.Double(rcx - 20, fy - 21, 40, 40, 90, 360 * left / (END_RETURN - END_RESULTS), Arc2D.OPEN));
+        g.setStroke(new BasicStroke(1));
+        g.setFont(Type.hud(18, true, 0f));
+        Art.textCenter(g, (int) Math.ceil(left) + "", rcx - 20, 40, fy + 6, new Color(255, 241, 196));
+        backBtn.setRect(bx, fy - 23, bw, 46);
+        boolean hover = backBtn.contains(mouseX, mouseY) && !mine;
+        Path2D.Double btn = new Path2D.Double();
+        btn.moveTo(bx + 12, fy - 23); btn.lineTo(bx + bw, fy - 23); btn.lineTo(bx + bw - 12, fy + 23); btn.lineTo(bx, fy + 23); btn.closePath();
+        g.setPaint(mine ? new GradientPaint(0, (float) (fy - 23), new Color(80, 75, 100), 0, (float) (fy + 23), new Color(45, 40, 60))
+            : new LinearGradientPaint(0, (float) (fy - 23), 0, (float) (fy + 23), new float[]{0f, .5f, 1f},
+                hover ? new Color[]{Color.WHITE, new Color(255, 225, 140), GOLD} : new Color[]{new Color(255, 241, 196), GOLD, new Color(185, 130, 42)}));
+        g.fill(btn);
+        g.setFont(Type.royal(18, true, 0.22f));
+        Art.textCenter(g, mine ? "WAITING..." : "BACK TO LOBBY", bx, bw, fy + 7, mine ? new Color(200, 196, 225) : new Color(26, 15, 2));
     }
 
     private static Snapshot.P find(Snapshot s, int id) {
