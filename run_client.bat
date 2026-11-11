@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
 set SERVER=%1
-if "%SERVER%"=="" set SERVER=172.20.10.6
+if "%SERVER%"=="" set SERVER=localhost
 echo Starting Capture the Flag Client connecting to %SERVER%...
-java -cp out ctf.client.Main %SERVER%
+java --enable-native-access=ALL-UNNAMED -cp "out;lib/*" ctf.client.Main %SERVER%
 pause

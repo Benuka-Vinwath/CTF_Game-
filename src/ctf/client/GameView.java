@@ -25,7 +25,7 @@ import java.awt.image.BufferedImage;
  * and whatever the window shows beyond the arena is filled with real scenery (GamePanel/Scenery), not black
  * bars. This component tells GamePanel which part of the world is visible, and converts mouse positions from
  * screen pixels back into world pixels before handing the events to GamePanel.
- * F11 toggles full screen and Esc leaves it.
+ * F11 toggles full screen; Esc goes to the game, which opens its in-game menu (GamePanel).
  */
 public class GameView extends JComponent {
     private final GamePanel game;
@@ -39,12 +39,10 @@ public class GameView extends JComponent {
     private long firstFrameNs, windowStartNs;
     private boolean effectsSwitchedOff;
     private final Runnable toggleFullscreen;
-    private final Runnable leaveFullscreen;
 
-    public GameView(GamePanel game, Runnable toggleFullscreen, Runnable leaveFullscreen) {
+    public GameView(GamePanel game, Runnable toggleFullscreen) {
         this.game = game;
         this.toggleFullscreen = toggleFullscreen;
-        this.leaveFullscreen = leaveFullscreen;
         game.setDoubleBuffered(false);
         game.useExternalClock();   // one clock for movement and painting: see GamePanel.frameTick
         game.setSize(MapData.W, MapData.H);   // GamePanel is never shown itself: we paint it
@@ -56,7 +54,6 @@ public class GameView extends JComponent {
         addKeyListener(new KeyAdapter() {
             @Override public void keyPressed(KeyEvent e) {
                 if (e.getKeyCode() == KeyEvent.VK_F11) { toggleFullscreen.run(); return; }
-                if (e.getKeyCode() == KeyEvent.VK_ESCAPE) leaveFullscreen.run();   // and the game still gets it: Esc cancels chat
                 for (KeyListener l : game.getKeyListeners()) l.keyPressed(forKey(e));
             }
             @Override public void keyReleased(KeyEvent e) {

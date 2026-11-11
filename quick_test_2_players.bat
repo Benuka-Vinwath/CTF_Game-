@@ -7,10 +7,10 @@ echo ========================================================
 start "CTF Server" cmd /k "java -cp out ctf.server.GameServer 5000 2"
 timeout /t 2 /nobreak > nul
 
-start "Player 1" cmd /k "java -cp out ctf.client.Main localhost"
+start "Player 1" cmd /k "java --enable-native-access=ALL-UNNAMED -cp out;lib/* ctf.client.Main localhost"
 timeout /t 1 /nobreak > nul
 
-start "Player 2" cmd /k "java -cp out ctf.client.Main localhost"
+start "Player 2" cmd /k "java --enable-native-access=ALL-UNNAMED -cp out;lib/* ctf.client.Main localhost"
 echo.
 echo Both clients opened!
 echo 1. On both windows: PLAY, then JOIN (address localhost): you land in the lobby room

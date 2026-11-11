@@ -157,9 +157,9 @@ public class ServerLogicTest {
         g.tick();
         check(c.team == 1, "pads allow moving while the other team has room");
         FakeConn fc = new FakeConn();
-        g.addPlayer("F", 0, 4, 99, fc);
-        check(fc.lines.stream().anyMatch(l -> l.startsWith("LOBBY") && l.contains(":4:" + (99 % LobbyMap.HAT_COLORS) + ":0:F")),
-                "a hat picked in the menu arrives with HELLO and is wrapped into range");
+        g.addPlayer("F", 0, 4, 99, 7, 3, fc);
+        check(fc.lines.stream().anyMatch(l -> l.startsWith("LOBBY") && l.contains(":4:" + (99 % LobbyMap.HAT_COLORS) + ":0:7:3:F")),
+                "hat, level and title arrive with HELLO (the colour wrapped into range)");
     }
 
     void lobbyIsSafeAndHasItsOwnWalls() {
@@ -190,7 +190,7 @@ public class ServerLogicTest {
         ticks(20);
         check(a.targetHits == 1, "hitting a practice target counts (" + a.targetHits + ")");
         check(g.bulletCount() == 0, "the bullet stops at the target");
-        check(conns.get(1).lines.stream().anyMatch(l -> l.startsWith("LOBBY") && l.contains(":1:P0")),
+        check(conns.get(1).lines.stream().anyMatch(l -> l.startsWith("LOBBY") && l.contains(":1:1:0:P0")),
                 "everyone is told the new hit count");
     }
 
@@ -407,9 +407,13 @@ public class ServerLogicTest {
         ticks(30);
         Snapshot s = Protocol.decodeSnapshot(g.snapshotLine());
         check(s != null && s.winner == 0 && s.matchEndElapsedSec > 0.9, "snapshot shows the winner and the elapsed time since the end");
+        check(!a.ready, "at the end of a match nobody has voted yet");
         g.wantAgain(a.id);
         ticks(2);
         check(g.phase() == GameState.Phase.ENDED, "going back waits for every player");
+        String lastLobby = null;
+        for (String line : conns.get(1).lines) if (line.startsWith("LOBBY")) lastLobby = line;
+        check(lastLobby != null && lastLobby.contains(a.id + ":0:1:"), "the vote is sent to everyone, so they see the tick (" + lastLobby + ")");
         g.wantAgain(p(1).id);
         ticks(2);
         check(g.phase() == GameState.Phase.LOBBY && g.winner() == -1 && !a.ready, "everyone is back in the lobby, not ready");
@@ -493,11 +497,12 @@ public class ServerLogicTest {
         check(Protocol.decodeInput("I 3 77 9") == null, "short input is rejected");
 
         Protocol.Lobby lob = Protocol.decodeLobby(Protocol.encodeLobby("LOBBY", 2, 1, 3,
-                List.of(new Protocol.LobbyEntry(1, 0, true, 3, 4, 7, "Ann"), new Protocol.LobbyEntry(2, 1, false, 0, 0, 0, "Bob"))));
+                List.of(new Protocol.LobbyEntry(1, 0, true, 3, 4, 7, 12, 5, "Ann"), new Protocol.LobbyEntry(2, 1, false, 0, 0, 0, 1, 0, "Bob"))));
         check(lob != null && lob.entries().size() == 2 && lob.entries().get(0).ready() && lob.entries().get(1).name().equals("Bob"),
                 "lobby list round trip");
         check(lob.hostId() == 1 && lob.mode() == 3 && lob.entries().get(0).hat() == 3 && lob.entries().get(0).hatColor() == 4
-                && lob.entries().get(0).targetHits() == 7, "host, hat and target hits survive the round trip");
+                && lob.entries().get(0).targetHits() == 7 && lob.entries().get(0).level() == 12 && lob.entries().get(0).title() == 5,
+                "host, hat, target hits, level and title survive the round trip");
 
         newLobby(0);
         Snapshot ls = Protocol.decodeSnapshot(g.snapshotLine());
