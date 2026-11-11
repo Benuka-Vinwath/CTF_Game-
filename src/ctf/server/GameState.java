@@ -37,7 +37,7 @@ public class GameState {
     public static final double FLAG_RETURN_SEC = 10;
     public static final double FLAG_TOUCH_R = 25;
     public static final double INPUT_TIMEOUT_SEC = 0.5;   // no input for this long: the player stops
-    public static final double AGAIN_TIMEOUT_SEC = 90;    // rematch starts by itself after this long
+    public static final double AGAIN_TIMEOUT_SEC = 20;    // after a match everyone returns to the lobby by itself after this long
     public static final int MAX_PLAYERS = LobbyMap.MAX_PLAYERS;
     public static final int MAX_TEAM = LobbyMap.MAX_TEAM;
     public static final double COUNTDOWN_SEC = 5;
@@ -73,10 +73,10 @@ public class GameState {
 
     // ------------------------------------------------------------------ lobby (TCP threads)
 
-    public synchronized Player addPlayer(String name, int team, Conn conn) { return addPlayer(name, team, 0, 0, conn); }
+    public synchronized Player addPlayer(String name, int team, Conn conn) { return addPlayer(name, team, 0, 0, 1, 0, conn); }
 
     /** hat and hatColor were chosen in the main menu; they are wrapped into range like setLook does. */
-    public synchronized Player addPlayer(String name, int team, int hat, int hatColor, Conn conn) {
+    public synchronized Player addPlayer(String name, int team, int hat, int hatColor, int level, int title, Conn conn) {
         if (players.size() >= MAX_PLAYERS) return null;
         if (team != 0 && team != 1) team = teamSize(0) <= teamSize(1) ? 0 : 1;   // auto-balance
         if (teamSize(team) >= MAX_TEAM) team = 1 - team;
@@ -84,6 +84,8 @@ public class GameState {
         Player p = new Player(nextId++, name, team, rng.nextInt(Integer.MAX_VALUE), conn);
         p.hat = Math.floorMod(hat, LobbyMap.HATS);
         p.hatColor = Math.floorMod(hatColor, LobbyMap.HAT_COLORS);
+        p.level = Math.max(1, Math.min(level, 999));   // shown to others only; each player's own computer keeps the real profile
+        p.title = Math.max(0, Math.min(title, 31));
         players.put(p.id, p);
         conn.send("WELCOME " + p.id + " " + p.token + " " + udpPort + " " + p.team);
         if (phase == Phase.LOBBY) {
@@ -180,7 +182,10 @@ public class GameState {
     /** The client asks to go back to the lobby on the victory screen. */
     public synchronized void wantAgain(int id) {
         Player p = players.get(id);
-        if (p != null && phase == Phase.ENDED) p.wantsAgain = true;
+        if (p == null || phase != Phase.ENDED || p.wantsAgain) return;
+        p.wantsAgain = true;
+        p.ready = true;   // during ENDED, "ready" in the LOBBY list means "voted to go back", so everyone sees the ticks
+        broadcastLobby();
     }
 
     public synchronized void setPing(int id, int ms) {
@@ -437,9 +442,10 @@ public class GameState {
         winner = winningTeam;
         endElapsed = 0;
         bullets.clear();
-        for (Player p : players.values()) { p.dx = p.dy = 0; p.shootLatch = false; p.wantsAgain = false; }
+        for (Player p : players.values()) { p.dx = p.dy = 0; p.shootLatch = false; p.wantsAgain = false; p.ready = false; }
         broadcast("GAMEOVER " + winner + " " + score[0] + " " + score[1]);
         broadcastStats();
+        broadcastLobby();   // everyone shows as not voted yet
         log(TEAM_NAMES[winner] + " wins " + score[0] + "-" + score[1]);
     }
 
@@ -548,7 +554,7 @@ public class GameState {
     private void broadcastLobby() {
         List<Protocol.LobbyEntry> list = new ArrayList<>();
         for (Player p : players.values())
-            list.add(new Protocol.LobbyEntry(p.id, p.team, p.ready, p.hat, p.hatColor, p.targetHits, p.name));
+            list.add(new Protocol.LobbyEntry(p.id, p.team, p.ready, p.hat, p.hatColor, p.targetHits, p.level, p.title, p.name));
         broadcast(Protocol.encodeLobby(phase.name(), minPlayers, hostId(), mode, list));
     }
 

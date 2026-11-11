@@ -37,14 +37,16 @@ public class GameplayTest {
         runTest("Line of Sight Blocked by Walls", GameplayTest::testLineOfSight);
         runTest("Power Tent Shield Activation & Invulnerability", GameplayTest::testPowerTentShieldAndInvulnerability);
         runTest("Power Tent Shield Expiration", GameplayTest::testPowerTentShieldExpiration);
-        runTest("Responsive Victory Celebration Screen Layout", GameplayTest::testResponsiveVictoryLayout);
+        runTest("Ending: Final Moment, VICTORY / DEFEAT, Results, Back To Lobby", GameplayTest::testEnding);
         runTest("Player Deaths, Elimination Attribution, and Ranking Order", GameplayTest::testPlayerDeathsAndRankingOrder);
-        runTest("Authoritative Match End Elapsed Timing & 60s Auto Transition", GameplayTest::testAuthoritativeMatchEndElapsedTiming);
-        runTest("Post-Match Leaderboard Layout & Team Statistics Aggregation", GameplayTest::testPostMatchLeaderboardLayout);
+        runTest("Demo: Match End Elapsed Timing", GameplayTest::testAuthoritativeMatchEndElapsedTiming);
         runTest("Match Reset Cleanly Clears All Match Statistics", GameplayTest::testMatchResetStatistics);
         runTest("Typography Fonts Resolve & Pixel-Art Sprites Scale By Whole Pixels", GameplayTest::testTypographyAndSprites);
         runTest("Wide/Tall Windows Are Filled With Scenery (No Black Bars)", GameplayTest::testViewFillsWindow);
         runTest("Lobby Room Draws, Ready Button Clicks, ENTER Chat Sends", GameplayTest::testLobbyRoom);
+        runTest("Menu: Clicking HOST And JOIN Buttons Reaches The Game", GameplayTest::testMenuButtons);
+        runTest("Esc Menu: Leave Lobby At Once, Quit Mid-Match Asks First", GameplayTest::testEscMenu);
+        runTest("Profile Database: Matches, XP, Levels, Achievements, Locks, Reset", GameplayTest::testProfile);
 
         System.out.println("\n=== Test Results Summary ===");
         System.out.println("Passed: " + passed + " | Failed: " + failed);
@@ -473,8 +475,8 @@ public class GameplayTest {
     static void testLobbyRoom() {
         java.util.List<String> sent = new java.util.ArrayList<>();
         ctf.common.Protocol.Lobby lobby = new ctf.common.Protocol.Lobby("LOBBY", 2, 0, 1, java.util.List.of(
-            new ctf.common.Protocol.LobbyEntry(0, 0, false, 2, 1, 0, "You"),
-            new ctf.common.Protocol.LobbyEntry(1, 1, true, 4, 3, 5, "Ann")));
+            new ctf.common.Protocol.LobbyEntry(0, 0, false, 2, 1, 0, 1, 0, "You"),
+            new ctf.common.Protocol.LobbyEntry(1, 1, true, 4, 3, 5, 3, 1, "Ann")));
         NetLink link = new NetLink() {
             @Override public void sendInput(int dx, int dy, double aim, boolean shoot) { if (shoot) sent.add("shoot"); }
             @Override public int pingMs() { return 20; }
@@ -526,6 +528,196 @@ public class GameplayTest {
         paintOnEdt(panel, g);
         g.dispose();
         assertTrue(true, "switching from the lobby to the match paints without errors");
+    }
+
+    /** The HOST / JOIN buttons sit inside their cards; a click must reach the button, not just select the card. */
+    static void testMenuButtons() {
+        java.util.List<String> did = new java.util.ArrayList<>();
+        java.util.prefs.Preferences node = java.util.prefs.Preferences.userRoot().node("ctf-menu-test-" + System.nanoTime());
+        java.nio.file.Path dir;
+        try { dir = java.nio.file.Files.createTempDirectory("throne-menu"); } catch (java.io.IOException e) { throw new RuntimeException(e); }
+        MenuScreen menu = new MenuScreen(new MenuScreen.Actions() {
+            public void host() { did.add("host"); }
+            public void join(String address) { did.add("join " + address); }
+            public void quit() {}
+            public void toggleFullscreen() {}
+            public boolean fullscreen() { return false; }
+        }, new Profile(dir.resolve("profile.db"), node));   // a throwaway profile: the player's own is never touched
+        menu.setSize(1600, 900);   // 1:1 with the menu's canvas, so canvas points are pixels
+        menu.setAddress("localhost");
+        BufferedImage img = new BufferedImage(1600, 900, BufferedImage.TYPE_INT_RGB);
+        Runnable paint = () -> { Graphics2D g = img.createGraphics(); menu.paint(g); g.dispose(); };
+        java.util.function.BiConsumer<Integer, Integer> click = (x, y) -> {
+            for (java.awt.event.MouseListener l : menu.getMouseListeners())
+                l.mousePressed(new java.awt.event.MouseEvent(menu, java.awt.event.MouseEvent.MOUSE_PRESSED, 0, 0, x, y, 1, false, java.awt.event.MouseEvent.BUTTON1));
+        };
+        onEdt(() -> {
+            paint.run();
+            click.accept(200, 440);   // PLAY on the main menu
+            paint.run();
+            click.accept(217, 703);   // HOST button inside the host card
+            paint.run();
+            click.accept(697, 711);   // JOIN button inside the join card
+        });
+        try { node.removeNode(); } catch (Exception ignored) { /* test settings only */ }
+        assertTrue(did.contains("host"), "clicking HOST hosts (" + did + ")");
+        assertTrue(did.contains("join localhost"), "clicking JOIN joins the typed address (" + did + ")");
+    }
+
+    static void testEscMenu() {
+        java.util.List<String> did = new java.util.ArrayList<>();
+        NetLink link = new NetLink() {
+            public void sendInput(int dx, int dy, double aim, boolean shoot) {}
+            public int pingMs() { return 20; }
+            public void requestPlayAgain() {}
+        };
+        GamePanel panel = new GamePanel(link, 0);
+        panel.setSize(MapData.W, MapData.H);
+        panel.setExits(new GamePanel.Exits() {
+            public void leave() { did.add("leave"); }
+            public void quit() { did.add("quit"); }
+            public void toggleFullscreen() {}
+            public boolean fullscreen() { return false; }
+            public boolean hosting() { return false; }
+            public java.util.List<String> matchFinished(Snapshot s, int myId, int mvpId, int lengthSec) { return java.util.List.of(); }
+            public boolean hatUnlocked(int hat) { return true; }
+        });
+        BufferedImage img = new BufferedImage(MapData.W, MapData.H, BufferedImage.TYPE_INT_RGB);
+        java.util.function.IntConsumer key = code -> {
+            Graphics2D g = img.createGraphics();
+            panel.paint(g);   // the menu lays out its rows while drawing
+            g.dispose();
+            for (java.awt.event.KeyListener l : panel.getKeyListeners())
+                l.keyPressed(new java.awt.event.KeyEvent(panel, java.awt.event.KeyEvent.KEY_PRESSED, 0, 0, code, java.awt.event.KeyEvent.CHAR_UNDEFINED));
+        };
+        int esc = java.awt.event.KeyEvent.VK_ESCAPE, down = java.awt.event.KeyEvent.VK_DOWN, up = java.awt.event.KeyEvent.VK_UP,
+            enter = java.awt.event.KeyEvent.VK_ENTER;
+
+        Snapshot s = new Snapshot();
+        s.phase = Snapshot.LOBBY;
+        Snapshot.P me = new Snapshot.P(); me.id = 0; me.name = "You"; me.x = 560; me.y = 300;
+        s.players = new Snapshot.P[]{me};
+        panel.onSnapshot(s);
+        onEdt(() -> { key.accept(esc); key.accept(down); key.accept(down); key.accept(enter); });   // RESUME, SETTINGS, LEAVE LOBBY
+        assertTrue(did.equals(java.util.List.of("leave")), "Esc > LEAVE LOBBY leaves at once (" + did + ")");
+
+        did.clear();
+        Snapshot m = Demo.copy(s);
+        m.phase = Snapshot.PLAYING;
+        m.tick = 2;
+        panel.onSnapshot(m);
+        onEdt(() -> {
+            key.accept(esc);   // close the menu still open from the lobby test
+            key.accept(esc); key.accept(down); key.accept(down); key.accept(down); key.accept(enter);   // QUIT GAME
+            key.accept(enter);   // the prompt starts on STAY
+        });
+        assertTrue(did.isEmpty(), "quitting mid-match asks first, and STAY keeps you in (" + did + ")");
+        onEdt(() -> { key.accept(esc); key.accept(down); key.accept(down); key.accept(down); key.accept(enter); key.accept(up); key.accept(enter); });
+        assertTrue(did.equals(java.util.List.of("quit")), "choosing QUIT in the prompt quits (" + did + ")");
+    }
+
+    /** The match ends with a capture: each step of the ending paints for winner and loser, and BACK TO LOBBY votes. */
+    static void testEnding() {
+        for (int me = 0; me < 2; me++) {   // player 0 is red (wins), player 1 is blue (loses)
+            int[] votes = {0};
+            NetLink link = new NetLink() {
+                public void sendInput(int dx, int dy, double aim, boolean shoot) {}
+                public int pingMs() { return 20; }
+                public void requestPlayAgain() { votes[0]++; }
+            };
+            GamePanel panel = new GamePanel(link, me);
+            panel.setSize(MapData.W, MapData.H);
+            Snapshot a = new Snapshot();
+            a.tick = 1;
+            Snapshot.P red = new Snapshot.P(); red.id = 0; red.team = 0; red.name = "Raven"; red.x = 80; red.y = 315; red.captures = 3; red.score = 300;
+            Snapshot.P blue = new Snapshot.P(); blue.id = 1; blue.team = 1; blue.name = "Frost"; blue.x = 900; blue.y = 300; blue.tags = 2; blue.score = 50;
+            a.players = new Snapshot.P[]{red, blue};
+            a.score = new int[]{2, 0};
+            a.flags[1].state = Snapshot.CARRIED;   // red is carrying the blue flag home
+            a.flags[1].carrier = 0;
+            panel.onSnapshot(a);
+            BufferedImage img = new BufferedImage(MapData.W, MapData.H, BufferedImage.TYPE_INT_RGB);
+            for (double t : new double[]{0.1, 1.5, 3.5, 6.5, 9, 15}) {   // final moment, VICTORY / DEFEAT, results
+                Snapshot b = Demo.copy(a);
+                b.tick = (long) (10 + t * 30);
+                b.phase = Snapshot.ENDED;
+                b.score = new int[]{3, 0};
+                b.winner = 0;
+                b.flags[1].state = Snapshot.BASE;
+                b.flags[1].carrier = -1;
+                b.matchEndElapsedSec = t;
+                panel.onSnapshot(b);
+                Graphics2D g = img.createGraphics();
+                paintOnEdt(panel, g);
+                g.dispose();
+            }
+            // results are up: BACK TO LOBBY sits bottom-right of the results card (its height follows the team size)
+            onEdt(() -> {
+                for (int x = MapData.W - 60; x > MapData.W / 2 && votes[0] == 0; x -= 20)
+                    for (int y = MapData.H / 2; y < MapData.H - 10 && votes[0] == 0; y += 10)
+                        for (java.awt.event.MouseListener l : panel.getMouseListeners())
+                            l.mousePressed(new java.awt.event.MouseEvent(panel, java.awt.event.MouseEvent.MOUSE_PRESSED, 0, 0, x, y, 1, false, java.awt.event.MouseEvent.BUTTON1));
+            });
+            assertTrue(votes[0] == 1, "BACK TO LOBBY on the results card votes to go back (player " + me + ")");
+        }
+    }
+
+    /** A real SQLite file in a temporary folder and a throwaway settings node, so the player's own profile is never touched. */
+    static void testProfile() {
+        java.util.prefs.Preferences node = java.util.prefs.Preferences.userRoot().node("ctf-profile-test-" + System.nanoTime());
+        java.nio.file.Path dir = null;
+        try {
+            dir = java.nio.file.Files.createTempDirectory("throne-profile");
+            java.nio.file.Path file = dir.resolve("profile.db");
+            node.putInt("hat", 4);   // an old setting: the halo, picked before hats had to be earned
+            Profile pr = new Profile(file, node);
+            assertTrue(pr.ok(), "the SQLite database opens (lib/sqlite-jdbc on the classpath)");
+            assertEquals(1, pr.hat(), "a hat that is now locked goes back to the crown on first launch");
+            assertTrue(!pr.hatUnlocked(4) && pr.hatUnlocked(1), "the halo starts locked, the crown is free");
+            pr.save("Raven", 4, 2, 5, 0);
+            assertTrue(pr.hat() != 4 && pr.title() == 0, "a locked hat or title cannot be saved");
+
+            Snapshot s = new Snapshot();   // a 1v1 that red wins 3-0: first win and a shutout
+            Snapshot.P me = new Snapshot.P(); me.id = 7; me.team = 0; me.name = "Raven"; me.captures = 3; me.tags = 4; me.deaths = 1; me.score = 400;
+            Snapshot.P them = new Snapshot.P(); them.id = 8; them.team = 1; them.name = "Frost"; them.tags = 1; them.deaths = 4; them.score = 25;
+            s.players = new Snapshot.P[]{me, them};
+            s.winner = 0;
+            s.score = new int[]{3, 0};
+            java.util.List<String> news = pr.recordMatch(s, 7, 7, 190);
+            int xp = Profile.xpFor(true, 3, 4, true);
+            assertTrue(news.contains("+" + xp + " XP"), "XP for the match is reported (" + news + ")");
+            assertTrue(news.stream().anyMatch(n -> n.startsWith("ACHIEVEMENT: FIRST WIN")) && news.stream().anyMatch(n -> n.startsWith("ACHIEVEMENT: 3-0 WIN")),
+                "first win and the shutout unlock achievements (" + news + ")");
+            assertTrue(pr.hatUnlocked(4) && pr.titleUnlocked(1), "the shutout unlocks the halo, the first win the Squire title");
+
+            s.winner = 1; s.score = new int[]{1, 3}; me.captures = 1; me.tags = 2; me.deaths = 5; me.score = 150;
+            pr.recordMatch(s, 7, 8, 300);
+            Profile.Stats st = pr.stats();
+            assertEquals(2, st.matches, "two matches saved");
+            assertEquals(1, st.wins, "one win");
+            assertEquals(4, st.captures, "captures add up across matches");
+            assertEquals(1, st.mvps, "MVP counted once");
+            assertEquals(2, st.history.size(), "both matches in the history");
+            assertTrue(!(Boolean) st.history.get(0)[0] && "BLUE 3 - 1".equals(st.history.get(0)[1]), "newest match first, as a loss 'BLUE 3 - 1'");
+            assertEquals(xp + Profile.xpFor(false, 1, 2, false), st.xp, "XP adds up");
+
+            pr.save("Raven", 4, 2, 1, 1);
+            Profile again = new Profile(file, node);   // reopen the file: everything is still there
+            assertTrue(again.hat() == 4 && again.title() == 1 && again.favouriteTeam() == 1 && again.stats().matches == 2, "the profile survives reopening");
+            again.reset();
+            Profile.Stats z = again.stats();
+            assertTrue(z.matches == 0 && z.xp == 0 && z.unlocked.isEmpty() && again.hat() == 1 && again.name().equals("Raven"),
+                "reset clears history, XP and achievements, keeps the name, and drops the now-locked hat");
+            int[] lv = Profile.levelOf(Profile.need(1) + Profile.need(2) + 5);
+            assertTrue(lv[0] == 3 && lv[1] == 5 && lv[2] == Profile.need(3), "levels follow the XP curve");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            try { node.removeNode(); } catch (Exception ignored) { /* test settings only */ }
+            if (dir != null) try (java.util.stream.Stream<java.nio.file.Path> w = java.nio.file.Files.walk(dir)) {
+                w.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+            } catch (Exception ignored) { /* temp files */ }
+        }
     }
 
     static void onEdt(Runnable r) {
@@ -585,47 +777,6 @@ public class GameplayTest {
         }
     }
 
-    static void testResponsiveVictoryLayout() {
-        NetLink link = new NetLink() {
-            @Override public void sendInput(int dx, int dy, double aim, boolean shoot) {}
-            @Override public int pingMs() { return 20; }
-            @Override public void requestPlayAgain() {}
-        };
-        GamePanel panel = new GamePanel(link, 0);
-
-        // Test with different resolutions: 800x600, 640x480, 1024x768
-        int[][] viewports = {{800, 600}, {640, 480}, {1024, 768}};
-        for (int[] vp : viewports) {
-            int vw = vp[0], vh = vp[1];
-            panel.setSize(vw, vh);
-
-            Snapshot s = new Snapshot();
-            s.winner = 1; // Blue team won
-            s.score = new int[]{1, 3};
-            s.players = new Snapshot.P[]{new Snapshot.P(), new Snapshot.P()};
-            s.players[0].name = "You"; s.players[0].team = 0;
-            s.players[1].name = "Ann"; s.players[1].team = 1;
-
-            panel.onSnapshot(s);
-
-            BufferedImage img = new BufferedImage(vw, vh, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D g = img.createGraphics();
-            paintOnEdt(panel, g);
-            g.dispose();
-
-            // Verify safe margins and responsive card bounds
-            int cardW = Math.min(520, Math.max(340, vw - 48));
-            int cardH = Math.min(380, Math.max(260, vh - 56));
-            int cardX = (vw - cardW) / 2;
-            int cardY = (vh - cardH) / 2;
-
-            assertTrue(cardX >= 24, "Card must maintain horizontal safe margin of >= 24px");
-            assertTrue(cardY >= 24, "Card must maintain vertical safe margin of >= 24px");
-            assertTrue(cardX + cardW <= vw - 24, "Card right edge must fit within viewport");
-            assertTrue(cardY + cardH <= vh - 24, "Card bottom edge must fit within viewport");
-        }
-    }
-
     static void testPlayerDeathsAndRankingOrder() {
         Demo demo = new Demo();
         demo.s.players = new Snapshot.P[4];
@@ -679,62 +830,15 @@ public class GameplayTest {
         }
 
         assertEquals(30.0, demo.s.matchEndElapsedSec, 1e-4, "Match end elapsed sec increments authoritatively");
-        assertTrue(demo.s.matchEndElapsedSec < 60.0, "Before 60s, celebration is active");
+        assertTrue(demo.s.matchEndElapsedSec < 60.0, "elapsed time is below 60 s after 30 s");
 
-        // Advance past 60s
+        // keep counting past 60 s
         for (int step = 0; step < 70; step++) {
             demo.matchEndElapsedSec += 0.5;
             demo.s.matchEndElapsedSec = demo.matchEndElapsedSec;
         }
         assertEquals(65.0, demo.s.matchEndElapsedSec, 1e-4, "Past 60s");
-        assertTrue(demo.s.matchEndElapsedSec >= 60.0, "After 60s, transitions automatically to post-match leaderboard");
-    }
-
-    static void testPostMatchLeaderboardLayout() {
-        NetLink link = new NetLink() {
-            @Override public void sendInput(int dx, int dy, double aim, boolean shoot) {}
-            @Override public int pingMs() { return 20; }
-            @Override public void requestPlayAgain() {}
-        };
-        GamePanel panel = new GamePanel(link, 0);
-
-        int[][] viewports = {{800, 600}, {640, 480}, {1024, 768}};
-        for (int[] vp : viewports) {
-            int vw = vp[0], vh = vp[1];
-            panel.setSize(vw, vh);
-
-            Snapshot s = new Snapshot();
-            s.winner = 0; // Red won
-            s.score = new int[]{3, 1};
-            s.matchEndElapsedSec = 61.0; // Leaderboard mode
-            s.players = new Snapshot.P[4];
-            String[] names = {"You", "Ann", "Bob", "Cy"};
-            for (int i = 0; i < 4; i++) {
-                Snapshot.P p = new Snapshot.P();
-                p.id = i; p.name = names[i]; p.team = i % 2;
-                p.tags = i * 2; p.deaths = i; p.captures = (i == 0 ? 3 : (i == 1 ? 1 : 0));
-                p.score = p.captures * 100 + p.tags * 25;
-                s.players[i] = p;
-            }
-
-            panel.onSnapshot(s);
-
-            BufferedImage img = new BufferedImage(vw, vh, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D g = img.createGraphics();
-            paintOnEdt(panel, g);
-            g.dispose();
-
-            // Verify safe margins and responsive card bounds
-            int cardW = Math.min(740, Math.max(340, vw - 36));
-            int cardH = Math.min(540, Math.max(380, vh - 36));
-            int cardX = (vw - cardW) / 2;
-            int cardY = (vh - cardH) / 2;
-
-            assertTrue(cardX >= 18, "Leaderboard card maintains horizontal safe margin >= 18px");
-            assertTrue(cardY >= 18, "Leaderboard card maintains vertical safe margin >= 18px");
-            assertTrue(cardX + cardW <= vw - 18, "Leaderboard card fits within viewport horizontally");
-            assertTrue(cardY + cardH <= vh - 18, "Leaderboard card fits within viewport vertically");
-        }
+        assertTrue(demo.s.matchEndElapsedSec >= 60.0, "elapsed time keeps counting past 60 s");
     }
 
     static void testMatchResetStatistics() {

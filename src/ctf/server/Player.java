@@ -30,6 +30,7 @@ public class Player {
     public int pingMs;                 // reported by the client over TCP
 
     public int hat, hatColor;          // chosen at the lobby laptop; hat 0 = none
+    public int level = 1, title;       // from the player's profile, shown on name tags
     public int targetHits;             // practice-target hits in the current lobby
 
     public Player(int id, String name, int team, int token, Conn conn) {

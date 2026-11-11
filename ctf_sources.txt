@@ -26,3 +26,4 @@ C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\tools\ConsoleClient.j
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\LobbyRoom.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\common\LobbyMap.java
 C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\MenuScreen.java
+C:\Users\ROG\Desktop\5th\ Sem\Networking\CTF_Game-\src\ctf\client\Profile.java

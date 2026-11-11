@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The ThroneFall - ending design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --gold: #ffcd5a; --gold-hi: #fff1c4; --gold-lo: #b9822a; --gold-dk: #5e3d0c;
+    --violet: #aa96eb; --stone: #6e5fa0;
+    --red: #eb4646; --red-fx: #ff5a32; --blue: #4696ff; --blue-fx: #3cc8ff;
+    --steel: #8fa6c8; --steel-dk: #2b3850;
+    --text: #f4f0ff; --soft: #c8c4e1; --muted: #8f8aa8;
+    --title: "Cinzel Decorative", "Palatino Linotype", serif;
+    --display: "Cinzel", "Palatino Linotype", serif;
+    --ui: "Rajdhani", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #04030a; color: var(--text); font-family: "Segoe UI", sans-serif; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 36px 18px 80px; }
+  .page > h1 { font-family: var(--display); font-weight: 900; letter-spacing: .1em; margin: 0; font-size: 28px;
+    background: linear-gradient(180deg, var(--gold-hi), var(--gold) 45%, var(--gold-lo)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { color: var(--soft); font-size: 14.5px; line-height: 1.6; margin: 8px 0 0; max-width: 860px; }
+  .timeline { display: flex; gap: 6px; margin: 22px 0 0; flex-wrap: wrap; }
+  .timeline div { flex: 1 1 150px; border: 1px solid #2a2144; background: #0c0918; padding: 10px 12px; font-size: 12.5px; color: var(--soft); }
+  .timeline b { display: block; font-family: var(--display); color: var(--gold); letter-spacing: .12em; font-size: 12px; margin-bottom: 3px; }
+  .sec { display: flex; align-items: baseline; gap: 14px; margin: 46px 0 12px; }
+  .sec b { font-family: var(--display); font-weight: 900; font-size: 13px; letter-spacing: .2em; color: var(--gold); border: 1px solid rgba(255,205,90,.45); padding: 5px 10px; }
+  .sec span { font-family: var(--display); font-weight: 700; letter-spacing: .14em; color: var(--violet); font-size: 15px; }
+  .note { color: var(--soft); font-size: 13.5px; line-height: 1.65; margin: 12px 0 0; max-width: 1000px; }
+  .note em { color: var(--gold); font-style: normal; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 820px) { .pair { grid-template-columns: 1fr; } }
+
+  .screen { position: relative; aspect-ratio: 16 / 9; width: 100%; overflow: hidden; border-radius: 6px; container-type: inline-size;
+    background: #07050f; box-shadow: 0 0 0 1px #221a38, 0 30px 80px rgba(0,0,0,.6); }
+  .layer { position: absolute; inset: 0; }
+  canvas.fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+  /* arena floor, as in the game */
+  .arena { background:
+      radial-gradient(ellipse 45% 60% at 8% 50%, rgba(255,90,50,.25), transparent 70%),
+      radial-gradient(ellipse 45% 60% at 92% 50%, rgba(60,170,255,.22), transparent 70%),
+      repeating-linear-gradient(0deg, transparent 0 4.4cqw, rgba(0,0,0,.35) 4.4cqw calc(4.4cqw + 2px)),
+      repeating-linear-gradient(90deg, transparent 0 8.8cqw, rgba(0,0,0,.28) 8.8cqw calc(8.8cqw + 2px)),
+      linear-gradient(#2a2140, #1b1530); }
+  .wall { position: absolute; background: linear-gradient(#8a7fb8 0 10%, #3d3460 10%); border: 1px solid #120e20; }
+
+  /* ---------- 1 · FINAL MOMENT ---------- */
+  .S1 .slow { animation: slowmo 6s ease-in-out infinite; }
+  @keyframes slowmo { 0%, 100% { filter: saturate(.55) brightness(.8); } 30%, 70% { filter: saturate(.55) brightness(.8); } }
+  .S1 .bars::before, .S1 .bars::after { content: ""; position: absolute; left: 0; right: 0; height: 9%; background: #000; animation: bars 6s ease-in-out infinite; }
+  .S1 .bars::before { top: 0; } .S1 .bars::after { bottom: 0; }
+  @keyframes bars { 0% { transform: scaleY(0); } 10%, 85% { transform: scaleY(1); } 100% { transform: scaleY(0); } }
+  .S1 .flash { background: #fff; animation: flash 6s ease-out infinite; }
+  @keyframes flash { 0% { opacity: .85; } 8% { opacity: 0; } 100% { opacity: 0; } }
+  .hero { position: absolute; left: 13%; top: 40%; width: 6cqw; animation: heroslide 6s ease-out infinite; }
+  @keyframes heroslide { 0% { transform: translateX(-1.5cqw); } 40%, 100% { transform: translateX(0); } }
+  .ring { position: absolute; left: 50%; top: 82%; width: 11cqw; height: 3.4cqw; transform: translate(-50%, -50%); border: .35cqw solid var(--gold);
+    border-radius: 50%; box-shadow: 0 0 2cqw rgba(255,205,90,.8), inset 0 0 1cqw rgba(255,205,90,.6); animation: ring 1.6s ease-out infinite; }
+  @keyframes ring { 0% { transform: translate(-50%, -50%) scale(.6); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(1.25); opacity: .25; } }
+  .base { position: absolute; left: 6%; top: 33%; width: 15cqw; height: 15cqw; border-radius: 50%; border: .25cqw dashed var(--red-fx);
+    background: radial-gradient(circle, rgba(235,70,70,.35), transparent 70%); }
+  .banner1 { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); width: 100%; text-align: center; padding: 1.4cqw 0;
+    background: linear-gradient(90deg, transparent, rgba(4,4,16,.85) 20%, rgba(4,4,16,.85) 80%, transparent); animation: banner1 6s ease-out infinite; }
+  .banner1::before, .banner1::after { content: ""; position: absolute; left: 20%; right: 20%; height: 2px; background: linear-gradient(90deg, transparent, var(--gold), transparent); }
+  .banner1::before { top: 0; } .banner1::after { bottom: 0; }
+  @keyframes banner1 { 0%, 8% { opacity: 0; transform: translate(-50%, -50%) scaleX(.6); } 16%, 85% { opacity: 1; transform: translate(-50%, -50%) scaleX(1); } 100% { opacity: 0; } }
+  .banner1 .k { font-family: var(--display); font-weight: 900; font-size: 3.4cqw; letter-spacing: .28em; color: var(--gold); text-shadow: 0 0 1.6cqw rgba(255,205,90,.7); }
+  .banner1 .s { font-family: var(--ui); font-weight: 700; font-size: 1.5cqw; letter-spacing: .14em; color: var(--soft); margin-top: .3cqw; }
+  .banner1 .s b { color: #ffb8a8; }
+  .tag { position: absolute; font-family: var(--ui); font-weight: 700; font-size: 1.2cqw; color: var(--soft); background: rgba(4,4,14,.7); padding: .15cqw .6cqw; border-radius: 1cqw; }
+
+  /* ---------- 2 · VICTORY ---------- */
+  .S2 .bg { background: radial-gradient(ellipse 60% 70% at 50% 45%, rgba(255,190,80,.28), transparent 70%), radial-gradient(ellipse 90% 90% at 50% 50%, #2a1210, #08040a 80%); }
+  .rays { position: absolute; left: 50%; top: 40%; width: 140cqw; height: 140cqw; margin: -70cqw 0 0 -70cqw;
+    background: repeating-conic-gradient(rgba(255,205,90,.13) 0 6deg, transparent 6deg 18deg); animation: spin 40s linear infinite;
+    -webkit-mask: radial-gradient(circle, #000 10%, transparent 45%); mask: radial-gradient(circle, #000 10%, transparent 45%); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .unfurl { position: absolute; top: 0; width: 13cqw; height: 34cqw; transform-origin: top; animation: unfurl 6s cubic-bezier(.2,.8,.2,1) infinite; }
+  .unfurl.l { left: 12%; } .unfurl.r { right: 12%; animation-delay: .15s; }
+  @keyframes unfurl { 0% { transform: scaleY(0); } 18%, 100% { transform: scaleY(1); } }
+  .crownDrop { position: absolute; left: 50%; top: 9%; width: 13cqw; margin-left: -6.5cqw; animation: drop 6s cubic-bezier(.3,1.6,.5,1) infinite; }
+  @keyframes drop { 0%, 6% { transform: translateY(-30cqw) rotate(-14deg); } 22% { transform: translateY(0) rotate(0); } 100% { transform: translateY(0); } }
+  .bigword { position: absolute; left: 0; right: 0; top: 34%; text-align: center; font-family: var(--title); font-weight: 900; font-size: 11cqw; letter-spacing: .04em; line-height: 1; }
+  .S2 .bigword { background: linear-gradient(180deg, #fffbe8, var(--gold-hi) 25%, var(--gold) 50%, var(--gold-lo) 75%, #f3c35c);
+    -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 .4cqw 0 var(--gold-dk)) drop-shadow(0 0 2.6cqw rgba(255,190,80,.45));
+    animation: wordin 6s cubic-bezier(.2,.9,.2,1) infinite; }
+  @keyframes wordin { 0%, 14% { opacity: 0; transform: scale(1.5); letter-spacing: .4em; } 26%, 100% { opacity: 1; transform: scale(1); letter-spacing: .04em; } }
+  .score { position: absolute; left: 0; right: 0; top: 64%; display: flex; justify-content: center; align-items: center; gap: 2.4cqw;
+    font-family: var(--ui); font-weight: 700; font-size: 4.4cqw; animation: fadeup 6s ease-out infinite; }
+  .score .t { font-family: var(--display); font-size: 1.6cqw; letter-spacing: .3em; }
+  .score .dash { color: var(--muted); font-size: 3cqw; }
+  @keyframes fadeup { 0%, 30% { opacity: 0; transform: translateY(1.5cqw); } 40%, 100% { opacity: 1; transform: none; } }
+  .sub { position: absolute; left: 0; right: 0; top: 79%; text-align: center; font-family: var(--display); font-weight: 700; letter-spacing: .3em; font-size: 1.4cqw; animation: fadeup 6s ease-out infinite; }
+
+  /* ---------- 3 · DEFEAT ---------- */
+  .S3 .bg { background: radial-gradient(ellipse 60% 70% at 50% 45%, rgba(120,150,200,.16), transparent 70%), radial-gradient(ellipse 90% 90% at 50% 50%, #121826, #05060b 80%); }
+  .S3 .bigword { color: var(--steel); background: linear-gradient(180deg, #e6eefc, #9fb3d6 45%, #4d5f80); -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 .4cqw 0 #141b2a); animation: sink 6s ease-out infinite; }
+  @keyframes sink { 0%, 10% { opacity: 0; transform: translateY(-3cqw); } 26% { opacity: 1; transform: none; } 30% { transform: translateX(-.4cqw); } 33% { transform: translateX(.4cqw); } 36%, 100% { transform: none; } }
+  .torn { position: absolute; top: 0; width: 13cqw; height: 34cqw; transform-origin: top left; animation: fallb 6s ease-in infinite; filter: saturate(.4) brightness(.7); }
+  .torn.l { left: 12%; } .torn.r { right: 12%; animation-delay: .25s; transform-origin: top right; }
+  @keyframes fallb { 0%, 12% { transform: none; } 45% { transform: rotate(14deg) translateY(4cqw); opacity: .9; } 100% { transform: rotate(22deg) translateY(40cqw); opacity: 0; } }
+  .S3 .torn.r { animation-name: fallr; }
+  @keyframes fallr { 0%, 12% { transform: none; } 45% { transform: rotate(-14deg) translateY(4cqw); opacity: .9; } 100% { transform: rotate(-22deg) translateY(40cqw); opacity: 0; } }
+
+  /* ---------- 4 · RESULTS ---------- */
+  .S4 .bg { background: radial-gradient(ellipse 70% 60% at 50% 30%, rgba(170,150,235,.16), transparent 70%), linear-gradient(#120c22, #06040c); }
+  .card { position: absolute; left: 6%; right: 6%; top: 5%; bottom: 6%; background: linear-gradient(180deg, rgba(20,14,40,.85), rgba(8,5,18,.95));
+    border: 1px solid rgba(255,205,90,.35); clip-path: polygon(2cqw 0, 100% 0, 100% calc(100% - 2cqw), calc(100% - 2cqw) 100%, 0 100%, 0 2cqw); padding: 2cqw 2.6cqw; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; }
+  .head h3 { margin: 0; font-family: var(--title); font-weight: 900; font-size: 3cqw;
+    background: linear-gradient(180deg, var(--gold-hi), var(--gold) 50%, var(--gold-lo)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .head .meta { font-family: var(--ui); font-weight: 700; font-size: 1.25cqw; letter-spacing: .1em; color: var(--muted); }
+  .awards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.4cqw; margin-top: 1.4cqw; }
+  .award { display: flex; align-items: center; gap: 1cqw; padding: .9cqw 1.1cqw; background: rgba(255,205,90,.06); border: 1px solid rgba(255,205,90,.25); animation: pop 6s ease-out infinite; }
+  .award:nth-child(2) { animation-delay: .2s; } .award:nth-child(3) { animation-delay: .4s; }
+  @keyframes pop { 0%, 6% { opacity: 0; transform: scale(.8); } 14%, 100% { opacity: 1; transform: none; } }
+  .award svg { width: 3.4cqw; height: 3.4cqw; flex: none; }
+  .award .what { font-family: var(--ui); font-weight: 700; font-size: 1.05cqw; letter-spacing: .2em; color: var(--violet); }
+  .award .who { font-family: var(--display); font-weight: 900; font-size: 1.7cqw; letter-spacing: .08em; }
+  .award .why { font-family: var(--ui); font-weight: 600; font-size: 1.05cqw; color: var(--muted); }
+  .teams { display: grid; grid-template-columns: 1fr 1fr; gap: 2cqw; margin-top: 1.6cqw; }
+  .team h4 { margin: 0 0 .5cqw; display: flex; justify-content: space-between; align-items: baseline; font-family: var(--display); font-weight: 900; font-size: 1.7cqw; letter-spacing: .16em; }
+  .team h4 span { font-family: var(--ui); font-size: 2.4cqw; }
+  .team.red h4 { color: #ff9b8c; } .team.blue h4 { color: #9ccaff; }
+  .team .win { font-family: var(--ui); font-size: 1cqw; letter-spacing: .2em; color: var(--gold); border: 1px solid rgba(255,205,90,.5); padding: .1cqw .5cqw; margin-left: .8cqw; }
+  .row { display: grid; grid-template-columns: 2.4cqw 1fr 3.2cqw 3.2cqw 3.2cqw 4.6cqw; align-items: center; gap: .6cqw; padding: .55cqw .7cqw;
+    font-family: var(--ui); font-weight: 600; font-size: 1.3cqw; color: var(--soft); border-bottom: 1px solid rgba(110,95,160,.3); }
+  .row.h { color: var(--muted); font-size: 1cqw; letter-spacing: .14em; font-weight: 700; border-bottom-color: rgba(110,95,160,.5); }
+  .row .n { font-family: var(--display); font-weight: 700; color: #fff; letter-spacing: .06em; }
+  .row .pts { text-align: right; color: var(--gold-hi); font-weight: 700; }
+  .row.mvp { background: linear-gradient(90deg, rgba(255,205,90,.16), transparent); }
+  .row.me .n::after { content: "  YOU"; font-family: var(--ui); font-size: .9cqw; color: var(--violet); letter-spacing: .2em; }
+  .row svg { width: 2.2cqw; height: 2.2cqw; }
+  .row .c { text-align: center; }
+  .foot { position: absolute; left: 2.6cqw; right: 2.6cqw; bottom: 2cqw; display: flex; align-items: center; justify-content: space-between; }
+  .votes { display: flex; align-items: center; gap: .7cqw; font-family: var(--ui); font-weight: 700; font-size: 1.3cqw; letter-spacing: .1em; color: var(--soft); }
+  .tick { width: 2cqw; height: 2cqw; border: 1px solid rgba(170,150,235,.5); display: grid; place-items: center; font-size: 1.2cqw; color: transparent; }
+  .tick.on { border-color: #6ee682; color: #6ee682; background: rgba(110,230,130,.15); }
+  .back { display: flex; align-items: center; gap: 1.4cqw; }
+  .count { position: relative; width: 4.2cqw; height: 4.2cqw; display: grid; place-items: center; font-family: var(--ui); font-weight: 700; font-size: 1.6cqw; color: var(--gold-hi); }
+  .count svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .count circle.p { animation: countdown 20s linear infinite; }
+  @keyframes countdown { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 100; } }
+  .go { font-family: var(--display); font-weight: 900; font-size: 1.5cqw; letter-spacing: .22em; padding: 1cqw 2.4cqw; color: #1a0f02;
+    background: linear-gradient(180deg, var(--gold-hi), var(--gold) 50%, var(--gold-lo)); clip-path: polygon(1cqw 0, 100% 0, calc(100% - 1cqw) 100%, 0 100%); }
+
+  /* ---------- 5 · LOBBY AFTER ---------- */
+  .S5 .bg { background: repeating-linear-gradient(0deg, transparent 0 4.4cqw, rgba(0,0,0,.25) 4.4cqw calc(4.4cqw + 2px)),
+      repeating-linear-gradient(90deg, transparent 0 4.4cqw, rgba(0,0,0,.25) 4.4cqw calc(4.4cqw + 2px)), linear-gradient(#2d2640, #231d34); }
+  .board { position: absolute; left: 33.9%; top: 0; width: 32.2%; height: 14cqw; background: #120e22; border: .5cqw solid #4a3f72; border-top: 0; padding: 1.4cqw 1cqw 0;
+    text-align: center; font-family: var(--ui); font-weight: 700; font-size: 1.35cqw; color: #e1e1ff; line-height: 1.55; }
+  .board .last { color: var(--gold); }
+  .mvpGlow { position: absolute; left: 47%; top: 46%; width: 6cqw; text-align: center; }
+  .mvpGlow::before { content: ""; position: absolute; left: 50%; top: 55%; width: 12cqw; height: 12cqw; margin: -6cqw 0 0 -6cqw; border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,205,90,.45), transparent 65%); animation: breathe 2.4s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { opacity: .55; transform: scale(.92); } 50% { opacity: 1; transform: scale(1.05); } }
+  .mvpGlow svg { position: relative; width: 100%; }
+  .plate { position: absolute; left: 50%; transform: translateX(-50%); margin-top: .4cqw; font-family: var(--ui); font-weight: 700; font-size: 1.15cqw; color: #ffe9a8; background: rgba(4,4,14,.75); padding: .1cqw .6cqw; border-radius: 1cqw; white-space: nowrap; }
+  .rematch { position: absolute; right: 2.4cqw; bottom: 2.4cqw; font-family: var(--display); font-weight: 900; font-size: 1.5cqw; letter-spacing: .16em; padding: 1cqw 2cqw;
+    color: #fff; background: linear-gradient(180deg, #2c2142, #140e24); border: 1px solid #ff7846; box-shadow: 0 0 1.6cqw rgba(255,120,70,.35); }
+  .rematch small { display: block; font-family: var(--ui); font-weight: 600; font-size: 1cqw; letter-spacing: .08em; color: var(--soft); text-align: center; margin-top: .2cqw; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>THE THRONEFALL · ENDING</h1>
+  <p class="lead">How a match ends and how everyone gets back to the lobby. Everything loops so you can watch it; in the game each step plays once, about 20 seconds in all. Same fonts, gold and violet as the Throne room menu.</p>
+  <div class="timeline">
+    <div><b>0 - 2 s</b>Final moment: slow motion, flash, who scored</div>
+    <div><b>2 - 7 s</b>VICTORY for the winners, DEFEAT for the losers</div>
+    <div><b>7 - 20 s</b>Results: awards, every player's stats, votes to go back</div>
+    <div><b>All voted or 20 s</b>Everyone returns to the lobby together</div>
+  </div>
+
+  <!-- 1 -->
+  <div class="sec"><b>1</b><span>Final moment (everyone sees this)</span></div>
+  <div class="screen S1">
+    <div class="layer arena slow"></div>
+    <div class="wall" style="left:47%;top:31%;width:3.6%;height:32%"></div>
+    <div class="wall" style="left:20%;top:16%;width:12%;height:4%"></div>
+    <div class="wall" style="left:30%;top:63%;width:2.2%;height:17%"></div>
+    <div class="base"></div>
+    <div class="hero">
+      <div class="ring"></div>
+      <svg viewBox="0 0 18 30" shape-rendering="crispEdges" style="position:relative;width:100%">
+        <rect x="11" y="0" width="1.5" height="9" fill="#ddd"/><rect x="12.5" y="0" width="5" height="4" fill="#4696ff"/>
+        <rect x="5" y="2" width="8" height="2" fill="#ffcd5a"/><rect x="5" y="4" width="8" height="6" fill="#c8c4e1"/><rect x="6" y="7" width="6" height="2" fill="#1a1428"/>
+        <rect x="3" y="10" width="12" height="9" fill="#eb4646"/><rect x="7" y="11" width="4" height="6" fill="#ffcd5a"/>
+        <rect x="5" y="19" width="3" height="7" fill="#5a4f78"/><rect x="10" y="19" width="3" height="7" fill="#5a4f78"/>
+      </svg>
+    </div>
+    <span class="tag" style="left:12.6%;top:73%">RAVEN</span>
+    <div class="banner1"><div class="k">FINAL CAPTURE</div><div class="s"><b>RAVEN</b> BRINGS THE BLUE FLAG HOME</div></div>
+    <div class="layer bars"></div>
+    <div class="layer flash"></div>
+  </div>
+  <p class="note"><em>What happens:</em> a white flash, black bars slide in like a film, the world drains a little colour and slows down. The scorer gets a pulsing gold ring and a banner names them. If the timer ran out instead, the banner says <em>TIME!</em> and then who won on points. Nobody can move or shoot from here on.</p>
+
+  <!-- 2 + 3 -->
+  <div class="sec"><b>2</b><span>VICTORY (winners) and DEFEAT (losers) at the same moment</span></div>
+  <div class="pair">
+    <div class="screen S2">
+      <div class="layer bg"></div>
+      <div class="rays"></div>
+      <svg class="unfurl l" viewBox="0 0 66 190" preserveAspectRatio="none"><path d="M0 0 H66 V190 L33 165 L0 190 Z" fill="#b82a36"/><rect width="66" height="12" fill="#ffcd5a"/><path d="M33 60 l14 22 h-28 z" fill="#ffcd5a"/></svg>
+      <svg class="unfurl r" viewBox="0 0 66 190" preserveAspectRatio="none"><path d="M0 0 H66 V190 L33 165 L0 190 Z" fill="#b82a36"/><rect width="66" height="12" fill="#ffcd5a"/><path d="M33 60 l14 22 h-28 z" fill="#ffcd5a"/></svg>
+      <canvas class="fx" data-kind="sparks"></canvas>
+      <svg class="crownDrop" viewBox="-40 -50 80 64">
+        <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff1c4"/><stop offset=".45" stop-color="#ffcd5a"/><stop offset="1" stop-color="#b9822a"/></linearGradient></defs>
+        <path d="M-32 0 L-36 -36 L-20 -22 L0 -46 L20 -22 L36 -36 L32 0 Z" fill="url(#g1)" stroke="#5e3d0c" stroke-width="2.5"/>
+        <rect x="-34" y="-2" width="68" height="11" rx="4" fill="url(#g1)" stroke="#5e3d0c" stroke-width="2.5"/>
+        <circle cx="0" cy="-18" r="5" fill="#eb4646"/><circle cx="-20" cy="-10" r="3.4" fill="#4696ff"/><circle cx="20" cy="-10" r="3.4" fill="#4696ff"/>
+      </svg>
+      <div class="bigword">VICTORY</div>
+      <div class="score"><span class="t" style="color:#ff9b8c">RED</span><span style="color:#ff9b8c">3</span><span class="dash">&mdash;</span><span style="color:#9ccaff">1</span><span class="t" style="color:#9ccaff">BLUE</span></div>
+      <div class="sub" style="color:var(--gold-hi)">THE THRONE IS YOURS</div>
+    </div>
+    <div class="screen S3">
+      <div class="layer bg"></div>
+      <svg class="torn l" viewBox="0 0 66 190" preserveAspectRatio="none"><path d="M0 0 H66 V120 L50 132 L58 150 L40 170 L33 160 L20 178 L12 150 L0 160 Z" fill="#1f4fb0"/><rect width="66" height="12" fill="#8a7a50"/></svg>
+      <svg class="torn r" viewBox="0 0 66 190" preserveAspectRatio="none"><path d="M0 0 H66 V150 L54 140 L46 172 L33 150 L22 166 L14 128 L0 140 Z" fill="#1f4fb0"/><rect width="66" height="12" fill="#8a7a50"/></svg>
+      <canvas class="fx" data-kind="ash"></canvas>
+      <div class="bigword">DEFEAT</div>
+      <div class="score"><span class="t" style="color:#b9a0a0">RED</span><span style="color:#b9a0a0">3</span><span class="dash">&mdash;</span><span style="color:#9ccaff">1</span><span class="t" style="color:#9ccaff">BLUE</span></div>
+      <div class="sub" style="color:var(--steel)">THE THRONE HAS FALLEN</div>
+    </div>
+  </div>
+  <p class="note"><em>Winners (left):</em> gold rays turn slowly, both team banners unroll from the top, a crown drops in with a bounce, VICTORY grows into place, gold sparks rise. <em>Losers (right):</em> the room turns cold steel-blue, the team banners are torn and fall away, DEFEAT drops in with a small shudder, grey ash drifts down. Both show the same final score.</p>
+
+  <!-- 4 -->
+  <div class="sec"><b>3</b><span>Match results (everyone)</span></div>
+  <div class="screen S4">
+    <div class="layer bg"></div>
+    <div class="card">
+      <div class="head"><h3>Match results</h3><span class="meta">2v2 &nbsp;&middot;&nbsp; 4:12 &nbsp;&middot;&nbsp; RED WINS 3 - 1</span></div>
+      <div class="awards">
+        <div class="award">
+          <svg viewBox="-40 -50 80 64"><path d="M-32 0 L-36 -36 L-20 -22 L0 -46 L20 -22 L36 -36 L32 0 Z" fill="#ffcd5a" stroke="#5e3d0c" stroke-width="3"/><rect x="-34" y="-2" width="68" height="11" rx="4" fill="#ffcd5a" stroke="#5e3d0c" stroke-width="3"/></svg>
+          <div><div class="what">MVP</div><div class="who">RAVEN</div><div class="why">275 points</div></div>
+        </div>
+        <div class="award">
+          <svg viewBox="0 0 40 40"><rect x="9" y="4" width="3" height="32" fill="#ddd"/><path d="M12 5 Q24 2 33 8 L27 14 L33 20 Q24 16 12 19 Z" fill="#eb4646"/></svg>
+          <div><div class="what">FLAG RUNNER</div><div class="who">RAVEN</div><div class="why">2 captures</div></div>
+        </div>
+        <div class="award">
+          <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="14" fill="none" stroke="#3cc8ff" stroke-width="3"/><circle cx="20" cy="20" r="5" fill="none" stroke="#3cc8ff" stroke-width="3"/><path d="M20 1 V10 M20 30 V39 M1 20 H10 M30 20 H39" stroke="#3cc8ff" stroke-width="3"/><circle cx="20" cy="20" r="2" fill="#ff5a32"/></svg>
+          <div><div class="what">SHARPSHOOTER</div><div class="who">FROST</div><div class="why">7 tags</div></div>
+        </div>
+      </div>
+      <div class="teams">
+        <div class="team red">
+          <h4><span style="font-size:1.7cqw">RED<i class="win" style="font-style:normal">WINNER</i></span><span>3</span></h4>
+          <div class="row h"><span></span><span>PLAYER</span><span class="c">C</span><span class="c">T</span><span class="c">D</span><span class="pts">PTS</span></div>
+          <div class="row mvp me"><svg viewBox="-40 -50 80 64"><path d="M-32 0 L-36 -36 L-20 -22 L0 -46 L20 -22 L36 -36 L32 0 Z" fill="#ffcd5a"/></svg><span class="n">RAVEN</span><span class="c">2</span><span class="c">3</span><span class="c">1</span><span class="pts">275</span></div>
+          <div class="row"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="3.5" fill="#eb4646"/></svg><span class="n">EMBER</span><span class="c">1</span><span class="c">2</span><span class="c">3</span><span class="pts">150</span></div>
+        </div>
+        <div class="team blue">
+          <h4><span style="font-size:1.7cqw">BLUE</span><span>1</span></h4>
+          <div class="row h"><span></span><span>PLAYER</span><span class="c">C</span><span class="c">T</span><span class="c">D</span><span class="pts">PTS</span></div>
+          <div class="row"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="3.5" fill="#4696ff"/></svg><span class="n">FROST</span><span class="c">0</span><span class="c">7</span><span class="c">2</span><span class="pts">175</span></div>
+          <div class="row"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="3.5" fill="#4696ff"/></svg><span class="n">KNIGHT_07</span><span class="c">1</span><span class="c">1</span><span class="c">3</span><span class="pts">125</span></div>
+        </div>
+      </div>
+      <div class="foot">
+        <div class="votes">BACK TO LOBBY &nbsp;<span class="tick on">&#10003;</span><span class="tick on">&#10003;</span><span class="tick on">&#10003;</span><span class="tick">&#10003;</span>&nbsp; 3/4 READY</div>
+        <div class="back">
+          <div class="count"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="16" fill="none" stroke="rgba(255,205,90,.18)" stroke-width="2.5"/>
+            <circle class="p" cx="18" cy="18" r="16" fill="none" stroke="#ffcd5a" stroke-width="2.5" pathLength="100" stroke-dasharray="100"/></svg>14</div>
+          <span class="go">BACK TO LOBBY</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">One card for everyone. Three <em>awards</em> pop in at the top (they come from stats the server already counts: points, captures, tags). Below, both teams side by side: every player's captures (C), tags (T), deaths (D) and points, the MVP row lit in gold and your own row marked YOU. At the bottom, a tick for each player who pressed <em>BACK TO LOBBY</em> and a ring counting down the last seconds; when everyone has pressed it, or the ring runs out, everyone goes back together.</p>
+
+  <!-- 5 -->
+  <div class="sec"><b>4</b><span>Back in the lobby</span></div>
+  <div class="screen S5">
+    <div class="layer bg"></div>
+    <div class="board">2v2 &nbsp;&middot;&nbsp; RED 2/2 &nbsp;&middot;&nbsp; BLUE 2/2<br>READY 0/4<br><span class="last">LAST MATCH: RED WON 3 - 1 &middot; MVP RAVEN</span></div>
+    <div class="mvpGlow">
+      <svg viewBox="0 0 18 30" shape-rendering="crispEdges">
+        <rect x="5" y="0" width="8" height="2" fill="#ffcd5a"/><rect x="5" y="-1" width="2" height="2" fill="#ffcd5a"/><rect x="11" y="-1" width="2" height="2" fill="#ffcd5a"/>
+        <rect x="5" y="2" width="8" height="6" fill="#c8c4e1"/><rect x="6" y="5" width="6" height="2" fill="#1a1428"/>
+        <rect x="3" y="8" width="12" height="9" fill="#eb4646"/><rect x="7" y="9" width="4" height="6" fill="#ffcd5a"/>
+        <rect x="5" y="17" width="3" height="7" fill="#5a4f78"/><rect x="10" y="17" width="3" height="7" fill="#5a4f78"/>
+      </svg>
+      <div class="plate">HOST &nbsp;RAVEN &nbsp;&#9733; MVP</div>
+    </div>
+    <div class="rematch">START REMATCH<small>same teams, everyone ready</small></div>
+  </div>
+  <p class="note">Teams and match size are kept, everyone is un-readied. The status board remembers the last match, and the MVP stands in a soft gold glow until the next match starts. The host can start a <em>rematch</em> straight away once everyone is ready again; anyone can still leave with Esc or the LEAVE button.</p>
+</div>
+
+<script>
+  // ?still on the address freezes every animation half-way, to look at (or print) the finished layout
+  if (location.search.indexOf('still') >= 0) {
+    var st = document.createElement('style');
+    st.textContent = '*, *::before, *::after { animation-delay: -3.2s !important; animation-play-state: paused !important; }';
+    document.head.appendChild(st);
+  }
+  document.querySelectorAll('canvas.fx').forEach(function (cv) {
+    var ctx = cv.getContext('2d'), ash = cv.dataset.kind === 'ash', parts = [];
+    function size() { var r = cv.getBoundingClientRect(); cv.width = r.width; cv.height = r.height; }
+    size(); window.addEventListener('resize', size);
+    function spawn(any) {
+      return { x: Math.random(), y: any ? Math.random() : (ash ? -0.05 : 1.05), s: (ash ? 0.04 : 0.08) + Math.random() * 0.06,
+               r: (ash ? 1.2 : 1) + Math.random() * 2, p: Math.random() * 6.28 };
+    }
+    for (var i = 0; i < 90; i++) parts.push(spawn(true));
+    var last = performance.now();
+    (function frame(t) {
+      var dt = Math.min(0.05, (t - last) / 1000); last = t;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      for (var i = 0; i < parts.length; i++) {
+        var e = parts[i];
+        e.y += (ash ? 1 : -1) * e.s * dt; e.p += dt * 2;
+        if (e.y < -0.06 || e.y > 1.06) { parts[i] = spawn(false); continue; }
+        var a = 0.5 + 0.5 * Math.sin(e.p * 2);
+        ctx.fillStyle = ash ? 'rgba(170,180,200,' + (0.55 * a).toFixed(3) + ')' : 'rgba(255,' + (190 + Math.round(40 * a)) + ',90,' + (0.9 * a).toFixed(3) + ')';
+        ctx.beginPath(); ctx.arc((e.x + Math.sin(e.p) * (ash ? 0.02 : 0.006)) * cv.width, e.y * cv.height, e.r, 0, 6.283); ctx.fill();
+      }
+      requestAnimationFrame(frame);
+    })(last);
+  });
+</script>
+</body>
+</html>

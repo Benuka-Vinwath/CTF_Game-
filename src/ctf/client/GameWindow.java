@@ -19,14 +19,16 @@ import java.io.IOException;
  * then the match). If the connection drops, it goes back to the menu and says why.
  * All NetEvents methods run on network threads, so anything that touches Swing is wrapped in invokeLater.
  */
-public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions {
+public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions, GamePanel.Exits {
     static final int PORT = 5000;
 
-    private final MenuScreen menu = new MenuScreen(this);
+    private final Profile profile = Profile.open();   // SQLite file in the user folder: name, looks, XP, match history
+    private final MenuScreen menu = new MenuScreen(this, profile);
     private volatile NetClient client;
     private volatile GamePanel panel;   // set while a game is open
     private GameView gameView;
     private boolean fullscreen, hosting;
+    private volatile boolean leaving;   // the player chose to leave: the disconnect that follows is not an error
 
     /** address: prefilled on the Play screen when given on the command line (play.ps1), else the last one used. */
     public GameWindow(String address) {
@@ -34,7 +36,10 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions 
         if (address != null) menu.setAddress(address);
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
-            @Override public void windowClosing(WindowEvent e) { quit(); }
+            @Override public void windowClosing(WindowEvent e) {
+                GamePanel p = panel;
+                if (p != null) p.askQuit(); else quit();   // in a game it may first ask (hosting, or mid-match)
+            }
         });
         setMinimumSize(new Dimension(640, 360));
         show(menu);
@@ -93,13 +98,33 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions 
             NetClient c = new NetClient(this);
             client = c;   // set first: events can arrive as soon as connect() returns
             try {
-                c.connect(host, port, name, -1, hat, color);
+                c.connect(host, port, name, profile.favouriteTeam(), hat, color, profile.level(), profile.title());
             } catch (IOException ex) {
                 client = null;
                 SwingUtilities.invokeLater(() -> menu.setStatus("Could not reach " + host + ":" + port + ". Check the address and that the host is in the game.", true, false));
             }
         }, "connect").start();
     }
+
+    /** Esc menu / lobby LEAVE: say goodbye to the server and go back to the menu. A server hosted here keeps running. */
+    @Override
+    public void leave() {
+        NetClient c = client;
+        if (c == null) return;
+        leaving = true;
+        c.disconnect();   // sends BYE; the close comes back through onDisconnected -> closeGame
+    }
+
+    @Override
+    public boolean hosting() { return hosting; }
+
+    @Override
+    public java.util.List<String> matchFinished(Snapshot s, int myId, int mvpId, int lengthSec) {
+        return profile.recordMatch(s, myId, mvpId, lengthSec);
+    }
+
+    @Override
+    public boolean hatUnlocked(int hat) { return profile.hatUnlocked(hat); }
 
     @Override
     public void quit() {
@@ -115,7 +140,8 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions 
         GamePanel gp = new GamePanel(c, myId);
         gp.setEffects(menu.effects());
         gp.setShake(menu.shake());
-        gameView = new GameView(gp, this::toggleFullscreen, this::leaveFullscreen);
+        gp.setExits(this);
+        gameView = new GameView(gp, this::toggleFullscreen);
         panel = gp;
         menu.stop();
         menu.setStatus("", false, false);
@@ -128,7 +154,9 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions 
         if (gameView != null) gameView.stop();
         gameView = null;
         panel = null;
-        menu.setStatus(reason, true, false);
+        if (leaving) menu.setStatus(hosting ? "You left. Your game is still hosted here for the others." : "You left the game.", false, false);
+        else menu.setStatus(reason, true, false);
+        leaving = false;
         show(menu);
         menu.start();
     }

@@ -28,7 +28,8 @@ public final class Protocol {
 
     public record Stat(int id, int tags, int captures, int deaths, int score, int ping) {}
 
-    public record LobbyEntry(int id, int team, boolean ready, int hat, int hatColor, int targetHits, String name) {}
+    /** level and title come from the player's profile (title: an index into the client's list of titles). */
+    public record LobbyEntry(int id, int team, boolean ready, int hat, int hatColor, int targetHits, int level, int title, String name) {}
 
     /** mode: players per team (1 = 1v1 ... 4 = 4v4). */
     public record Lobby(String phase, int minPlayers, int hostId, int mode, List<LobbyEntry> entries) {}
@@ -169,12 +170,12 @@ public final class Protocol {
         return out;
     }
 
-    /** LOBBY phase minPlayers hostId mode id:team:ready:hat:hatColor:targetHits:name,... (name last: cleanName keeps it free of : and ,) */
+    /** LOBBY phase minPlayers hostId mode id:team:ready:hat:hatColor:targetHits:level:title:name,... (name last: cleanName keeps it free of : and ,) */
     public static String encodeLobby(String phase, int minPlayers, int hostId, int mode, List<LobbyEntry> entries) {
         StringJoiner sj = new StringJoiner(",");
         for (LobbyEntry e : entries) {
             sj.add(e.id() + ":" + e.team() + ":" + (e.ready() ? 1 : 0) + ":" + e.hat() + ":" + e.hatColor()
-                    + ":" + e.targetHits() + ":" + e.name());
+                    + ":" + e.targetHits() + ":" + e.level() + ":" + e.title() + ":" + e.name());
         }
         return "LOBBY " + phase + " " + minPlayers + " " + hostId + " " + mode + " " + sj;
     }
@@ -189,10 +190,10 @@ public final class Protocol {
             int mode = Integer.parseInt(t[4]);
             if (t.length == 6 && !t[5].isEmpty()) {
                 for (String e : t[5].split(",")) {
-                    String[] p = e.split(":", 7);
-                    if (p.length < 7) continue;
+                    String[] p = e.split(":", 9);
+                    if (p.length < 9) continue;
                     entries.add(new LobbyEntry(Integer.parseInt(p[0]), Integer.parseInt(p[1]), p[2].equals("1"),
-                            Integer.parseInt(p[3]), Integer.parseInt(p[4]), Integer.parseInt(p[5]), p[6]));
+                            Integer.parseInt(p[3]), Integer.parseInt(p[4]), Integer.parseInt(p[5]), Integer.parseInt(p[6]), Integer.parseInt(p[7]), p[8]));
                 }
             }
             return new Lobby(t[1], min, host, mode, entries);
