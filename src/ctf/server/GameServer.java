@@ -64,6 +64,9 @@ public class GameServer {
                 while (true) {
                     Socket s = server.accept();
                     s.setTcpNoDelay(true);   // send small messages immediately
+                    // On the internet a player can vanish without the connection closing (signal lost, laptop shut).
+                    // Clients PING every 2 s, so 15 s of silence means they are gone: the read times out and they are removed.
+                    s.setSoTimeout(15_000);
                     new Thread(new ClientHandler(s, game), "client-" + s.getPort()).start();
                 }
             } catch (IOException e) {
