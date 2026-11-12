@@ -38,11 +38,9 @@ public class GameView extends JComponent {
     private int windowFrames, slowWindows;
     private long firstFrameNs, windowStartNs;
     private boolean effectsSwitchedOff;
-    private final Runnable toggleFullscreen;
 
     public GameView(GamePanel game, Runnable toggleFullscreen) {
         this.game = game;
-        this.toggleFullscreen = toggleFullscreen;
         game.setDoubleBuffered(false);
         game.useExternalClock();   // one clock for movement and painting: see GamePanel.frameTick
         game.setSize(MapData.W, MapData.H);   // GamePanel is never shown itself: we paint it

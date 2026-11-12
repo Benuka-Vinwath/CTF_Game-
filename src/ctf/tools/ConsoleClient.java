@@ -52,26 +52,27 @@ public class ConsoleClient {
         holder[0] = client;
         client.connect("localhost", 5000, name, -1);
 
-        Scanner kb = new Scanner(System.in);
         System.out.println("Lobby commands: r = ready, u = unready, s = start (host), 0 / 1 = team, quit, anything else is chat");
-        while (kb.hasNextLine()) {
-            String t = kb.nextLine();
-            switch (t) {
-                case "quit" -> { client.disconnect(); return; }
-                case "r" -> client.sendReady(true);
-                case "u" -> client.sendReady(false);
-                case "s" -> client.sendBegin();
-                case "0" -> client.sendTeam(0);
-                case "1" -> client.sendTeam(1);
-                case "right" -> { dx = 1; dy = 0; }
-                case "left" -> { dx = -1; dy = 0; }
-                case "up" -> { dx = 0; dy = -1; }
-                case "down" -> { dx = 0; dy = 1; }
-                case "stop" -> { dx = 0; dy = 0; }
-                case "lag" -> { client.toggleLagSim(); System.out.println("lag simulation " + (client.lagSimOn() ? "ON (100 ms each way, 5% loss)" : "off")); }
-                case "stats" -> System.out.println("snapshots received " + client.getPacketsReceived() + ", stale dropped "
-                        + client.getPacketsStale() + ", lost by simulation " + client.getPacketsSimulatedLost() + ", ping " + client.pingMs() + " ms");
-                default -> client.sendChat(t);
+        try (Scanner kb = new Scanner(System.in)) {   // closed when the console client ends
+            while (kb.hasNextLine()) {
+                String t = kb.nextLine();
+                switch (t) {
+                    case "quit" -> { client.disconnect(); return; }
+                    case "r" -> client.sendReady(true);
+                    case "u" -> client.sendReady(false);
+                    case "s" -> client.sendBegin();
+                    case "0" -> client.sendTeam(0);
+                    case "1" -> client.sendTeam(1);
+                    case "right" -> { dx = 1; dy = 0; }
+                    case "left" -> { dx = -1; dy = 0; }
+                    case "up" -> { dx = 0; dy = -1; }
+                    case "down" -> { dx = 0; dy = 1; }
+                    case "stop" -> { dx = 0; dy = 0; }
+                    case "lag" -> { client.toggleLagSim(); System.out.println("lag simulation " + (client.lagSimOn() ? "ON (100 ms each way, 5% loss)" : "off")); }
+                    case "stats" -> System.out.println("snapshots received " + client.getPacketsReceived() + ", stale dropped "
+                            + client.getPacketsStale() + ", lost by simulation " + client.getPacketsSimulatedLost() + ", ping " + client.pingMs() + " ms");
+                    default -> client.sendChat(t);
+                }
             }
         }
         client.disconnect();
