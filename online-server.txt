@@ -4,3 +4,4 @@
 # Then give this file to your friends together with the game. While no address is set,
 # the ONLINE button (next to JOIN) is hidden; HOST and JOIN on your own network work either way.
 # How to set up the server: docs/ONLINE-SERVER.md
+129.225.115.99:5000

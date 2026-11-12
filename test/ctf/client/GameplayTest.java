@@ -730,8 +730,6 @@ public class GameplayTest {
             java.nio.file.Files.writeString(f, "# only comments, no address yet\n");
             assertTrue(MenuScreen.readOnlineServer(f) == null, "comments only: no online server, the button stays hidden");
             assertTrue(MenuScreen.readOnlineServer(dir.resolve("missing.txt")) == null, "no file: no online server");
-            assertTrue(MenuScreen.readOnlineServer(java.nio.file.Path.of("online-server.txt")) == null,
-                "the shipped online-server.txt has no address until the server is set up");
         } catch (java.io.IOException e) {
             throw new RuntimeException(e);
         }
