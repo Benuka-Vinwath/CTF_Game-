@@ -19,7 +19,7 @@ import java.util.concurrent.LinkedBlockingQueue;
  * takes lines from an outbox queue and writes them to the socket, so game logic never waits on a
  * slow client's network. A client that stops reading entirely (queue over MAX_QUEUE) is dropped.
  *
- * Commands (client to server): HELLO team name [hat colour level title], MODE n (host: n players per team), READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text,
+ * Commands (client to server): HELLO team name hat colour level title version, MODE n (host: n players per team), READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text,
  * BEGIN (host starts the countdown), LOOK hat colour, AGAIN (back to the lobby after a match), BYE
  */
 public class ClientHandler implements Runnable, Conn {
@@ -50,8 +50,10 @@ public class ClientHandler implements Runnable, Conn {
         Thread writer = new Thread(this::writeLoop, Thread.currentThread().getName() + "-writer");
         writer.setDaemon(true);
         writer.start();
-        try (BufferedReader in = new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
+        // Not try-with-resources: closing the reader would close the socket before the writer has sent the last line
+        // (e.g. "ERROR ... get the latest version"). The writer closes the socket once its queue is flushed.
+        try {
+            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
             String line;
             while ((line = in.readLine()) != null) {
                 if (!handle(line.trim())) break;
@@ -72,7 +74,12 @@ public class ClientHandler implements Runnable, Conn {
 
         if (player == null) {
             if (!cmd.equals("HELLO")) { send("ERROR send HELLO <team> <name> first"); return true; }
-            String[] a = arg.split(" ");   // HELLO team name [hat colour level title]; cleanName keeps the name free of spaces
+            String[] a = arg.split(" ");   // HELLO team name hat colour level title version; cleanName keeps the name free of spaces
+            String version = a.length > 6 ? a[6] : "older";
+            if (!version.equals(Protocol.VERSION)) {   // the wire format changes between versions: refuse clearly instead of failing strangely
+                send("ERROR Your game is version " + version + " but this server runs " + Protocol.VERSION + ". Get the latest version to play.");
+                return false;
+            }
             int team = parseInt(a[0], -1);
             String name = Protocol.cleanName(a.length > 1 ? a[1] : "");
             player = game.addPlayer(name, team, a.length > 2 ? parseInt(a[2], 0) : 0, a.length > 3 ? parseInt(a[3], 0) : 0,

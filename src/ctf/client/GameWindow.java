@@ -29,6 +29,7 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
     private GameView gameView;
     private boolean fullscreen, hosting;
     private volatile boolean leaving;   // the player chose to leave: the disconnect that follows is not an error
+    private volatile String refusal;    // the server's ERROR when it refused us, shown instead of "Disconnected"
 
     /** address: prefilled on the Play screen when given on the command line (play.ps1), else the last one used. */
     public GameWindow(String address) {
@@ -220,14 +221,17 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
 
     @Override
     public void onServerError(String message) {
+        if (panel == null) refusal = message;   // refused before joining (old version, server full): the close follows at once
         SwingUtilities.invokeLater(() -> {
             if (panel != null) panel.tell("! " + message);
-            else menu.setStatus("The server said: " + message, true, false);
+            else menu.setStatus(message, true, false);
         });
     }
 
     @Override
     public void onDisconnected(String reason) {
-        SwingUtilities.invokeLater(() -> closeGame("Disconnected: " + reason));
+        String why = refusal != null ? refusal : "Disconnected: " + reason;   // keep the server's own reason when it refused us
+        refusal = null;
+        SwingUtilities.invokeLater(() -> closeGame(why));
     }
 }

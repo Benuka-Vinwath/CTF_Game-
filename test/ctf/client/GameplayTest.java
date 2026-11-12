@@ -47,6 +47,7 @@ public class GameplayTest {
         runTest("Menu: Clicking HOST And JOIN Buttons Reaches The Game", GameplayTest::testMenuButtons);
         runTest("Esc Menu: Leave Lobby At Once, Quit Mid-Match Asks First", GameplayTest::testEscMenu);
         runTest("Profile Database: Matches, XP, Levels, Achievements, Locks, Reset", GameplayTest::testProfile);
+        runTest("online-server.txt: Address Read, Comments Skipped, Missing = No Button", GameplayTest::testOnlineServerFile);
 
         System.out.println("\n=== Test Results Summary ===");
         System.out.println("Passed: " + passed + " | Failed: " + failed);
@@ -717,6 +718,22 @@ public class GameplayTest {
             if (dir != null) try (java.util.stream.Stream<java.nio.file.Path> w = java.nio.file.Files.walk(dir)) {
                 w.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
             } catch (Exception ignored) { /* temp files */ }
+        }
+    }
+
+    static void testOnlineServerFile() {
+        try {
+            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("online-server");
+            java.nio.file.Path f = dir.resolve("online-server.txt");
+            java.nio.file.Files.writeString(f, "# comment\n\n   # another\n  140.238.12.34:5000  \nlater line\n");
+            assertEquals("140.238.12.34:5000", MenuScreen.readOnlineServer(f), "the first line that is not a comment is the address, trimmed");
+            java.nio.file.Files.writeString(f, "# only comments, no address yet\n");
+            assertTrue(MenuScreen.readOnlineServer(f) == null, "comments only: no online server, the button stays hidden");
+            assertTrue(MenuScreen.readOnlineServer(dir.resolve("missing.txt")) == null, "no file: no online server");
+            assertTrue(MenuScreen.readOnlineServer(java.nio.file.Path.of("online-server.txt")) == null,
+                "the shipped online-server.txt has no address until the server is set up");
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
         }
     }
 

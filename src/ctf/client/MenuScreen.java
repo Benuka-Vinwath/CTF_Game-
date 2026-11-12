@@ -60,6 +60,7 @@ final class MenuScreen extends JComponent {
     private String status = "";
     private boolean statusError, busy;
     private String lanAddress = "...";
+    private final String onlineServer = readOnlineServer(java.nio.file.Path.of("online-server.txt"));
     private int dragSlider = -1;
 
     private final Timer timer = new Timer(16, e -> repaint());
@@ -756,7 +757,7 @@ final class MenuScreen extends JComponent {
         if (fx) Art.glow(g, new Color(110, 230, 130), 1314, y - 6, 12, 0.7f);
         g.fill(new Ellipse2D.Double(1308, y - 12, 11, 11));
         g.setFont(Type.hud(17, true, 0.08f));
-        Art.text(g, "LAN " + lanAddress + "   ·   v1.0", 1330, y, MUTED);
+        Art.text(g, "LAN " + lanAddress + "   ·   v" + ctf.common.Protocol.VERSION, 1330, y, MUTED);
     }
 
     private double keycap(Graphics2D g, String k, double x, double y) {
@@ -914,7 +915,30 @@ final class MenuScreen extends JComponent {
                 rx += rw + 8;
             }
             button(g, tx, y + h - 80, 170, busy && tile == 1 ? "..." : "JOIN", true, () -> go(1));
+            if (onlineServer != null)   // the cloud server from online-server.txt: play with anyone, anywhere
+                button(g, tx + 186, y + h - 80, 170, "ONLINE", false, () -> {
+                    address.setLength(0);
+                    address.append(onlineServer);
+                    editName = false;
+                    go(1);
+                });
         }
+    }
+
+    /**
+     * The cloud server's address, from online-server.txt next to the game (one line, e.g. 140.238.1.2:5000).
+     * Empty or missing: there is no online server yet, and the ONLINE button stays hidden.
+     */
+    static String readOnlineServer(java.nio.file.Path file) {
+        try {
+            for (String line : java.nio.file.Files.readAllLines(file)) {
+                String s = line.trim();
+                if (!s.isEmpty() && !s.startsWith("#")) return s;
+            }
+        } catch (java.io.IOException ignored) {
+            // no file: no online server
+        }
+        return null;
     }
 
     /** A text box; the caret blinks while it has the keyboard. */
