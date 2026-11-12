@@ -24,6 +24,9 @@ import java.util.StringJoiner;
 public final class Protocol {
     private Protocol() {}
 
+    /** Sent with HELLO; the server refuses other versions with a clear message, because the wire format changes between them. */
+    public static final String VERSION = "1.2";
+
     public record Input(int id, int token, int seq, int dx, int dy, double aim, boolean shoot) {}
 
     public record Stat(int id, int tags, int captures, int deaths, int score, int ping) {}

@@ -467,6 +467,33 @@ public class ServerLogicTest {
         check(g.addPlayer("Extra", -1, new FakeConn()) == null, "the ninth player is refused");
     }
 
+    /** Over a real socket: an old game version is refused with a clear message, the current one is welcomed. */
+    void versionCheck() {
+        int port = 47000 + new Random().nextInt(2000);
+        try {
+            GameServer.start(port, 2);
+            String old = helloReply(port, "HELLO 0 Old 0 0 1 0 0.9");
+            check(old != null && old.startsWith("ERROR") && old.contains("version 0.9") && old.contains(Protocol.VERSION),
+                    "an old version is refused, naming both versions (" + old + ")");
+            String none = helloReply(port, "HELLO 0 Older 0 0 1 0");
+            check(none != null && none.startsWith("ERROR") && none.contains("older"), "a game that sends no version is refused too (" + none + ")");
+            String ok = helloReply(port, "HELLO 0 Fresh 0 0 1 0 " + Protocol.VERSION);
+            check(ok != null && ok.startsWith("WELCOME"), "the current version is welcomed (" + ok + ")");
+        } catch (java.io.IOException e) {
+            check(false, "server could not start on port " + port + ": " + e);
+        }
+    }
+
+    private static String helloReply(int port, String hello) throws java.io.IOException {
+        try (java.net.Socket s = new java.net.Socket("127.0.0.1", port)) {
+            s.setSoTimeout(3000);
+            java.io.PrintWriter out = new java.io.PrintWriter(s.getOutputStream(), true);
+            java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(s.getInputStream()));
+            out.println(hello);
+            return in.readLine();
+        }
+    }
+
     void protocolRoundTrips() {
         newGame(0, 1);
         Player a = p(0), b = p(1);
@@ -555,6 +582,7 @@ public class ServerLogicTest {
         t.run("late join", t::lateJoinerDropsStraightIn);
         t.run("server full", t::serverFullIsRefused);
         t.run("protocol", t::protocolRoundTrips);
+        t.run("version check", t::versionCheck);
         System.out.println("\nPassed: " + passed + " | Failed: " + failed);
         if (failed > 0) System.exit(1);
     }

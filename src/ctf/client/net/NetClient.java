@@ -88,7 +88,7 @@ public class NetClient implements NetLink {
         reader.setDaemon(true);
         reader.start();
 
-        sendTcp("HELLO " + team + " " + Protocol.cleanName(name) + " " + hat + " " + color + " " + level + " " + title);
+        sendTcp("HELLO " + team + " " + Protocol.cleanName(name) + " " + hat + " " + color + " " + level + " " + title + " " + Protocol.VERSION);
         scheduler.scheduleAtFixedRate(() -> sendTcp("PING " + System.nanoTime()),
                 2, 2, TimeUnit.SECONDS);
     }

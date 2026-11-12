@@ -1,0 +1,15 @@
+[Unit]
+Description=The ThroneFall game server (TCP + UDP port 5000)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/thronefall
+# 2 = a match needs two full teams to start; 256 MB is plenty and fits the free 1 GB machines
+ExecStart=/usr/bin/java -Xmx256m -cp /home/ubuntu/thronefall/out ctf.server.GameServer 5000 2
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
