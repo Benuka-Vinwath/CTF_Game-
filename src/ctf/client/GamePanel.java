@@ -877,8 +877,6 @@ public class GamePanel extends JPanel {
         viewSet = true;
     }
 
-    private int ox() { return (int) Math.round(vX0()); }
-    private int oy() { return (int) Math.round(vY0()); }
     private double vX0() { return viewSet ? viewX : 0; }
     private double vY0() { return viewSet ? viewY : 0; }
     private double vW() { return viewSet ? viewW : (getWidth() > 0 ? getWidth() : MapData.W); }
