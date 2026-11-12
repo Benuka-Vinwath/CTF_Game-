@@ -669,13 +669,13 @@ public class GameplayTest {
         try {
             dir = java.nio.file.Files.createTempDirectory("throne-profile");
             java.nio.file.Path file = dir.resolve("profile.db");
-            node.putInt("hat", 4);   // an old setting: the halo, picked before hats had to be earned
+            node.putInt("hat", 2);   // an old setting: the top hat, which has been removed
             Profile pr = new Profile(file, node);
             assertTrue(pr.ok(), "the SQLite database opens (lib/sqlite-jdbc on the classpath)");
-            assertEquals(1, pr.hat(), "a hat that is now locked goes back to the crown on first launch");
-            assertTrue(!pr.hatUnlocked(4) && pr.hatUnlocked(1), "the halo starts locked, the crown is free");
-            pr.save("Raven", 4, 2, 5, 0);
-            assertTrue(pr.hat() != 4 && pr.title() == 0, "a locked hat or title cannot be saved");
+            assertEquals(1, pr.hat(), "a removed hat goes back to the crown on first launch");
+            assertTrue(!pr.hatUnlocked(2) && !pr.hatUnlocked(0) && pr.hatUnlocked(1) && pr.hatUnlocked(3) && pr.hatUnlocked(4) && pr.hatUnlocked(5), "the removed hats are gone, the crown, horns, halo and wings are free");
+            pr.save("Raven", 2, 2, 5, 0);
+            assertTrue(pr.hat() != 2 && pr.title() == 0, "a removed hat or a locked title cannot be saved");
 
             Snapshot s = new Snapshot();   // a 1v1 that red wins 3-0: first win and a shutout
             Snapshot.P me = new Snapshot.P(); me.id = 7; me.team = 0; me.name = "Raven"; me.captures = 3; me.tags = 4; me.deaths = 1; me.score = 400;
@@ -688,7 +688,7 @@ public class GameplayTest {
             assertTrue(news.contains("+" + xp + " XP"), "XP for the match is reported (" + news + ")");
             assertTrue(news.stream().anyMatch(n -> n.startsWith("ACHIEVEMENT: FIRST WIN")) && news.stream().anyMatch(n -> n.startsWith("ACHIEVEMENT: 3-0 WIN")),
                 "first win and the shutout unlock achievements (" + news + ")");
-            assertTrue(pr.hatUnlocked(4) && pr.titleUnlocked(1), "the shutout unlocks the halo, the first win the Squire title");
+            assertTrue(pr.titleUnlocked(1), "the first win unlocks the Squire title");
 
             s.winner = 1; s.score = new int[]{1, 3}; me.captures = 1; me.tags = 2; me.deaths = 5; me.score = 150;
             pr.recordMatch(s, 7, 8, 300);
@@ -706,8 +706,8 @@ public class GameplayTest {
             assertTrue(again.hat() == 4 && again.title() == 1 && again.favouriteTeam() == 1 && again.stats().matches == 2, "the profile survives reopening");
             again.reset();
             Profile.Stats z = again.stats();
-            assertTrue(z.matches == 0 && z.xp == 0 && z.unlocked.isEmpty() && again.hat() == 1 && again.name().equals("Raven"),
-                "reset clears history, XP and achievements, keeps the name, and drops the now-locked hat");
+            assertTrue(z.matches == 0 && z.xp == 0 && z.unlocked.isEmpty() && again.hat() == 4 && again.name().equals("Raven"),
+                "reset clears history, XP and achievements, and keeps the name and the hat");
             int[] lv = Profile.levelOf(Profile.need(1) + Profile.need(2) + 5);
             assertTrue(lv[0] == 3 && lv[1] == 5 && lv[2] == Profile.need(3), "levels follow the XP curve");
         } catch (Exception e) {

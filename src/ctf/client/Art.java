@@ -288,6 +288,41 @@ final class Art {
         });
     }
 
+    private static final BufferedImage[] GUN_PICS = new BufferedImage[4];   // [team * 2 + (firing ? 1 : 0)]
+    private static final Map<String, BufferedImage> GUN_SIZES = new HashMap<>();
+    private static final double GUN_LEN = 32, GUN_PIC_W = 432;   // the picture's barrel reaches 32 units; 432 = width of the idle picture
+
+    /**
+     * Draws the gun picture (assets/gun_red|blue[_fire].png) in place of gun(): same place, same aim, same kick.
+     * Returns false when the picture is missing, so the caller can fall back to the old blaster.
+     */
+    static synchronized boolean gunArt(Graphics2D g, int team, double kick, boolean flash) {
+        int i = team * 2 + (flash ? 1 : 0);
+        if (GUN_PICS[i] == null) {
+            try { GUN_PICS[i] = javax.imageio.ImageIO.read(new java.io.File("assets/gun_" + (team == 1 ? "blue" : "red") + (flash ? "_fire" : "") + ".png")); }
+            catch (Exception e) { return false; }
+        }
+        BufferedImage full = GUN_PICS[i];
+        if (full == null) return false;
+        double unit = GUN_LEN / GUN_PIC_W, scale = Math.hypot(g.getTransform().getScaleX(), g.getTransform().getShearY());
+        int px = Math.max(1, (int) Math.round(full.getWidth() * unit * scale));
+        BufferedImage im = GUN_SIZES.computeIfAbsent(i + ":" + px, k -> {   // shrunk in halving steps so it stays smooth
+            BufferedImage cur = full;
+            while (cur.getWidth() / 2 >= px) cur = MenuScreen.resize(cur, cur.getWidth() / 2, cur.getHeight() / 2);
+            return cur.getWidth() > px ? MenuScreen.resize(cur, px, Math.max(1, cur.getHeight() * px / cur.getWidth())) : cur;
+        });
+        AffineTransform keep = g.getTransform();
+        Object hint = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.translate(4 + kick, -5.1);   // barrel axis on the wielder's centre line, grip hanging below
+        double s = full.getWidth() * unit / im.getWidth();
+        g.scale(s, s);
+        g.drawImage(im, 0, 0, null);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, hint);
+        g.setTransform(keep);
+        return true;
+    }
+
     /** The blaster, drawn along +x from the wielder's centre; the muzzle ends about 31 units out. kick pulls it back. */
     static void gun(Graphics2D g, int team, double kick, boolean flash) {
         g.setColor(new Color(30, 26, 40));

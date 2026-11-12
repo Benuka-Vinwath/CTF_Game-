@@ -150,6 +150,12 @@ final class MenuScreen extends JComponent {
     }
 
     private void hover() {
+        if (page == Page.CREDITS) {
+            boolean over = false;
+            for (Object[] h : hits) if (((Shape) h[0]).contains(mouse)) over = true;
+            setCursor(Cursor.getPredefinedCursor(over ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+            return;
+        }
         if (page != Page.MAIN && page != Page.PLAY) return;
         for (Object[] h : hits) if (((Shape) h[0]).contains(mouse) && h.length > 2) {
             if (page == Page.MAIN) sel = (Integer) h[2]; else tile = (Integer) h[2];
@@ -210,7 +216,7 @@ final class MenuScreen extends JComponent {
             case 1 -> { page = Page.PROFILE; stats = profile.stats(); editName = true; }
             case 2 -> page = Page.HOWTO;
             case 3 -> page = Page.SETTINGS;
-            case 4 -> page = Page.CREDITS;
+            case 4 -> { page = Page.CREDITS; creditsStart = time; }
             default -> actions.quit();
         }
     }
@@ -591,7 +597,24 @@ final class MenuScreen extends JComponent {
     /** The red knight sprite with the chosen hat; (cx, top) is the top centre of the sprite, k = canvas units per sprite pixel. */
     private void knight(Graphics2D g, double cx, double top, double k, double bobPhase) {
         double bob = bobPhase == 0 ? 0 : Math.sin(time * 2.1 + bobPhase) * k * 1.2;
-        BufferedImage im = Art.spriteCrisp(0, 0, 1);
+        BufferedImage art = knightArt((int) Math.round(Art.SPR_H * k * g.getTransform().getScaleY()), team == 1);   // blue team = the blue knight; red and "any" = red
+        if (art != null) {
+            double h = Art.SPR_H * k, w = h * art.getWidth() / art.getHeight();
+            Object keepHint = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            AffineTransform at = new AffineTransform();
+            at.translate(cx - w / 2, top + bob);
+            at.scale(w / art.getWidth(), h / art.getHeight());
+            g.drawImage(art, at, null);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, keepHint);
+            AffineTransform keep = g.getTransform();   // the hats are drawn in the picture's own pixels (KNIGHT_W x KNIGHT_H)
+            g.translate(cx - w / 2, top + bob);
+            g.scale(w / KNIGHT_W, h / KNIGHT_H);
+            knightHat(g, hat, LobbyRoom.HAT_COLORS[Math.floorMod(hatColor, LobbyRoom.HAT_COLORS.length)]);
+            g.setTransform(keep);
+            return;
+        }
+        BufferedImage im = Art.spriteCrisp(0, 0, 1);   // assets/knight.png missing: the old pixel sprite and its small hats
         Object keepHint = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
         g.drawImage(im, (int) Math.round(cx - Art.SPR_W * k / 2), (int) Math.round(top + bob), (int) Math.round(Art.SPR_W * k), (int) Math.round(Art.SPR_H * k), null);
@@ -601,6 +624,116 @@ final class MenuScreen extends JComponent {
         g.scale(k / GamePanel.PX, k / GamePanel.PX);   // LobbyRoom.hat works in world units (2.4 per sprite pixel)
         LobbyRoom.hat(g, hat, hatColor, 0, 6);
         g.setTransform(keep);
+    }
+
+    // ---- hats for the big knight picture: same thick dark outline as the picture, helmet top centre at x = 497 ----
+
+    static final int KNIGHT_W = 882, KNIGHT_H = 1138;
+    private static final Color OUTLINE = new Color(13, 9, 18);
+    private static final BasicStroke OUT = new BasicStroke(9, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
+
+    /** Absolute SVG-style path: letters M L Q C Z, every token separated by a space. */
+    private static Path2D.Double path(String d) {
+        Path2D.Double p = new Path2D.Double();
+        String[] t = d.trim().split("\s+");
+        for (int i = 0; i < t.length; ) {
+            char c = t[i++].charAt(0);
+            double[] v = new double[6];
+            int n = c == 'C' ? 6 : c == 'Q' ? 4 : c == 'Z' ? 0 : 2;
+            for (int j = 0; j < n; j++) v[j] = Double.parseDouble(t[i++]);
+            switch (c) {
+                case 'M' -> p.moveTo(v[0], v[1]);
+                case 'L' -> p.lineTo(v[0], v[1]);
+                case 'Q' -> p.quadTo(v[0], v[1], v[2], v[3]);
+                case 'C' -> p.curveTo(v[0], v[1], v[2], v[3], v[4], v[5]);
+                default -> p.closePath();
+            }
+        }
+        return p;
+    }
+
+    private static void solid(Graphics2D g, Shape s, Color fill) {
+        g.setColor(fill); g.fill(s);
+        g.setStroke(OUT); g.setColor(OUTLINE); g.draw(s);
+    }
+
+    private static void shade(Graphics2D g, Shape s, Color c) { g.setColor(c); g.fill(s); }
+
+    private static void line(Graphics2D g, Shape s, Color c, float w) {
+        g.setStroke(new BasicStroke(w, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.setColor(c); g.draw(s);
+    }
+
+    static void knightHat(Graphics2D g, int hat, Color c) {
+        Color white = new Color(255, 255, 255, 105);
+        switch (hat) {
+            case 1 -> {   // crown
+                solid(g, path("M 360 206 L 350 104 L 420 158 L 497 72 L 574 158 L 644 104 L 634 206 Q 497 234 360 206 Z"), c);
+                Path2D.Double band = path("M 360 206 Q 497 234 634 206 L 632 236 Q 497 266 362 236 Z");
+                solid(g, band, c); shade(g, band, new Color(0, 0, 0, 70));
+                shade(g, path("M 372 198 L 364 132 L 412 168 Z"), new Color(255, 255, 255, 100));
+                Ellipse2D.Double ruby = new Ellipse2D.Double(481, 178, 32, 32);
+                solid(g, ruby, new Color(255, 77, 109));
+                shade(g, new Ellipse2D.Double(486, 183, 10, 10), Color.WHITE);
+                for (double[] pr : new double[][]{{350, 104, 11}, {497, 72, 12}, {644, 104, 11}})
+                    solid(g, new Ellipse2D.Double(pr[0] - pr[2], pr[1] - pr[2], 2 * pr[2], 2 * pr[2]), new Color(255, 244, 194));
+            }
+            case 3 -> mirrored(g, () -> {   // horns
+                solid(g, path("M 330 312 C 214 318 150 250 168 98 C 206 188 286 220 370 232 Z"), c);
+                line(g, path("M 190 134 C 206 200 262 234 330 250"), new Color(255, 255, 255, 115), 10);
+                line(g, path("M 300 300 C 250 296 224 270 210 240"), new Color(0, 0, 0, 46), 8);
+            });
+            case 4 -> {   // halo
+                Ellipse2D.Double ring = new Ellipse2D.Double(347, 82, 300, 68);
+                for (int i = 0; i < 4; i++) line(g, ring, new Color(c.getRed(), c.getGreen(), c.getBlue(), 28), 56 - i * 8);   // soft glow
+                line(g, ring, OUTLINE, 34);
+                line(g, ring, c, 18);
+                line(g, path("M 366 104 Q 420 78 497 78"), new Color(255, 255, 255, 180), 6);
+            }
+            case 5 -> mirrored(g, () -> {   // wings
+                solid(g, path("M 330 318 C 240 330 140 292 80 186 C 136 206 170 196 200 158 C 212 204 262 230 350 244 Z"), c);
+                line(g, path("M 326 298 C 252 306 180 280 136 226"), new Color(13, 9, 18, 140), 6);
+                line(g, path("M 318 270 C 258 274 208 250 182 212"), new Color(13, 9, 18, 140), 6);
+                line(g, path("M 98 192 C 148 216 188 208 208 176"), new Color(255, 255, 255, 125), 8);
+            });
+            default -> { }   // no hat; 2 (top hat) was removed
+        }
+    }
+
+    /** Draws the left-hand piece, then its mirror image on the right of the helmet (centre line x = 497). */
+    private static void mirrored(Graphics2D g, Runnable leftSide) {
+        leftSide.run();
+        AffineTransform keep = g.getTransform();
+        g.translate(994, 0);
+        g.scale(-1, 1);
+        leftSide.run();
+        g.setTransform(keep);
+    }
+
+    private static final BufferedImage[] KNIGHT_FULL = new BufferedImage[2];   // [0] red (assets/knight.png), [1] blue (assets/knight_blue.png)
+    private static final java.util.Map<Integer, BufferedImage> KNIGHT_SIZES = new java.util.HashMap<>();
+
+    /** The team's knight picture shrunk to the given pixel height in halving steps, so it stays smooth; null if the file is missing. */
+    static synchronized BufferedImage knightArt(int px, boolean blue) {
+        int t = blue ? 1 : 0;
+        if (KNIGHT_FULL[t] == null) {
+            try { KNIGHT_FULL[t] = javax.imageio.ImageIO.read(new java.io.File(blue ? "assets/knight_blue.png" : "assets/knight.png")); } catch (Exception e) { return null; }
+        }
+        BufferedImage full = KNIGHT_FULL[t];
+        if (full == null || px <= 0) return full;
+        return KNIGHT_SIZES.computeIfAbsent(px * 2 + t, key -> {
+            BufferedImage cur = full;
+            while (cur.getHeight() / 2 >= px) cur = resize(cur, cur.getWidth() / 2, cur.getHeight() / 2);
+            return cur.getHeight() > px ? resize(cur, Math.max(1, cur.getWidth() * px / cur.getHeight()), px) : cur;
+        });
+    }
+
+    static BufferedImage resize(BufferedImage src, int w, int h) {
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = out.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.drawImage(src, 0, 0, w, h, null);
+        g.dispose();
+        return out;
     }
 
     private void drawFooter(Graphics2D g, boolean main) {
@@ -1210,14 +1343,352 @@ final class MenuScreen extends JComponent {
         Art.text(g, s, x, y, MUTED);
     }
 
+    // ------------------------------------------------------------------ CREDITS (drawn live, in the menu's own style)
+
+    private double creditsStart;   // menu time when the page was opened: the sections fade in one after another from here
+    private static final java.awt.font.FontRenderContext FRC = new java.awt.font.FontRenderContext(null, true, true);
+    private static final Color[] GOLD_RAMP = {GOLD_HI, GOLD, GOLD_LO}, SILVER_RAMP = {Color.WHITE, new Color(208, 212, 232), new Color(120, 126, 160)};
+    private static final Color CREAM = new Color(255, 236, 200);
+
+    /** Twinkling stars round the title and the names, on the 1600x900 canvas. */
+    private static final double[][] SPARKS = {{610, 140}, {990, 150}, {800, 58}, {520, 300}, {1090, 300}, {470, 345}, {1135, 350},
+        {533, 436}, {1067, 436}, {800, 470}, {470, 575}, {1130, 575}, {600, 700}, {1000, 700}};
+
+    private static double ease(double t) { t = Math.max(0, Math.min(1, t)); return 1 - Math.pow(1 - t, 3); }
+
+    /** 0..1 position of a band of light that passes every `period` seconds and takes `dur` seconds; more than 1 while idle. */
+    private double sweep(double period, double dur, double offset) { return ((time + offset) % period) / dur; }
+
+    /** Runs body fading in and rising 24 units; e = 0..1 progress of this section's entrance. */
+    private void reveal(Graphics2D g, double e, Runnable body) {
+        if (e <= 0) return;
+        Composite keepC = g.getComposite();
+        AffineTransform keep = g.getTransform();
+        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) e));
+        g.translate(0, (1 - e) * 24);
+        body.run();
+        g.setTransform(keep);
+        g.setComposite(keepC);
+    }
+
+    /** Centred text in a vertical colour ramp with a soft shadow and, while 0 <= sweep <= 1, a band of light running over the letters. */
+    private static void shineText(Graphics2D g, String text, Font font, double cx, double base, Color[] ramp, Color shadow, double sweep) {
+        java.awt.font.TextLayout tl = new java.awt.font.TextLayout(text, font, FRC);
+        Shape t = tl.getOutline(AffineTransform.getTranslateInstance(cx - tl.getAdvance() / 2, base));
+        Rectangle2D b = t.getBounds2D();
+        g.setColor(shadow);
+        g.fill(AffineTransform.getTranslateInstance(0, 3).createTransformedShape(t));
+        g.setPaint(new LinearGradientPaint(0, (float) b.getMinY(), 0, (float) b.getMaxY(), new float[]{0f, .5f, 1f}, ramp));
+        g.fill(t);
+        if (sweep >= 0 && sweep <= 1) {   // a second fill with a see-through band: the glyph edges stay smooth
+            double w = Math.max(60, b.getHeight() * 1.6), x0 = b.getMinX() - w + sweep * (b.getWidth() + 2 * w);
+            g.setPaint(new LinearGradientPaint((float) x0, (float) b.getMinY(), (float) (x0 + w), (float) (b.getMinY() + w * 0.5), new float[]{0f, .5f, 1f},
+                new Color[]{new Color(255, 255, 255, 0), new Color(255, 252, 235, 215), new Color(255, 255, 255, 0)}));
+            g.fill(t);
+        }
+    }
+
+    private static void gilded(Graphics2D g, Shape s, double y0, double y1) {
+        g.setPaint(new LinearGradientPaint(0, (float) y0, 0, (float) y1, new float[]{0f, .5f, 1f}, GOLD_RAMP));
+        g.fill(s);
+        g.setStroke(new BasicStroke(1.3f)); g.setColor(GOLD_DK); g.draw(s);
+    }
+
+    private static void person(Graphics2D g, double cx, double cy, double k) {   // head and shoulders, k = size
+        gilded(g, new Ellipse2D.Double(cx - 0.30 * k, cy - 0.55 * k, 0.60 * k, 0.60 * k), cy - 0.55 * k, cy + 0.05 * k);
+        gilded(g, new Arc2D.Double(cx - 0.55 * k, cy + 0.12 * k, 1.10 * k, 1.0 * k, 0, 180, Arc2D.CHORD), cy + 0.12 * k, cy + 0.62 * k);
+    }
+
+    private static void medallion(Graphics2D g, double cx, double cy, double r) {   // a person inside a laurel wreath
+        g.setPaint(new Color(10, 6, 16, 150));
+        g.fill(new Ellipse2D.Double(cx - r * 0.9, cy - r * 0.9, r * 1.8, r * 1.8));
+        g.setStroke(new BasicStroke(1.4f)); g.setColor(new Color(255, 205, 90, 120));
+        g.draw(new Ellipse2D.Double(cx - r * 0.9, cy - r * 0.9, r * 1.8, r * 1.8));
+        AffineTransform keep = g.getTransform();
+        for (int side = -1; side <= 1; side += 2) {
+            g.setTransform(keep);
+            g.translate(cx, cy);
+            if (side == 1) g.scale(-1, 1);
+            for (int i = 0; i < 7; i++) {
+                double th = Math.toRadians(112 + i * 21);
+                AffineTransform at = AffineTransform.getTranslateInstance(r * 1.08 * Math.cos(th), -r * 1.08 * Math.sin(th));
+                at.rotate(-th + Math.PI / 2);
+                gilded(g, at.createTransformedShape(new Ellipse2D.Double(-r * 0.10, -r * 0.22, r * 0.20, r * 0.44)), -r, r);
+            }
+        }
+        g.setTransform(keep);
+        person(g, cx, cy + r * 0.05, r * 1.0);
+    }
+
+    private static void book(Graphics2D g, double cx, double cy, double k) {
+        for (int s = -1; s <= 1; s += 2)
+            gilded(g, poly(cx + s * 0.04 * k, cy - 0.34 * k, cx + s * 1.0 * k, cy - 0.5 * k, cx + s * 1.0 * k, cy + 0.36 * k, cx + s * 0.04 * k, cy + 0.5 * k), cy - 0.5 * k, cy + 0.5 * k);
+        g.setStroke(new BasicStroke(1.2f)); g.setColor(GOLD_DK);
+        for (int i = 0; i < 3; i++) for (int s = -1; s <= 1; s += 2)
+            g.draw(new Line2D.Double(cx + s * 0.18 * k, cy - 0.16 * k + i * 0.2 * k, cx + s * 0.82 * k, cy - 0.28 * k + i * 0.2 * k));
+    }
+
+    private static void university(Graphics2D g, double cx, double cy, double k) {
+        gilded(g, poly(cx - 1.0 * k, cy - 0.2 * k, cx, cy - 0.85 * k, cx + 1.0 * k, cy - 0.2 * k), cy - 0.85 * k, cy);
+        gilded(g, new Rectangle2D.Double(cx - 1.0 * k, cy - 0.2 * k, 2.0 * k, 0.16 * k), cy - 0.2 * k, cy - 0.04 * k);
+        for (int i = 0; i < 4; i++) gilded(g, new Rectangle2D.Double(cx - 0.8 * k + i * 0.52 * k, cy - 0.02 * k, 0.2 * k, 0.62 * k), cy, cy + 0.6 * k);
+        gilded(g, new Rectangle2D.Double(cx - 1.06 * k, cy + 0.62 * k, 2.12 * k, 0.16 * k), cy + 0.62 * k, cy + 0.78 * k);
+    }
+
+    private static void crowd(Graphics2D g, double cx, double cy, double k) {
+        person(g, cx - 0.85 * k, cy + 0.12 * k, 0.72 * k);
+        person(g, cx + 0.85 * k, cy + 0.12 * k, 0.72 * k);
+        person(g, cx, cy, k);
+    }
+
+    /** The raven mark: a swept wing of three feathers, drawn in a 100 x 58 box with its top-left at (x, y). */
+    private static void raven(Graphics2D g, double x, double y) {
+        AffineTransform keep = g.getTransform();
+        g.translate(x, y);
+        Path2D wing = path("M 0 34 C 18 4 58 -6 100 4 C 72 8 54 16 46 28 C 62 22 80 22 98 28 C 72 34 54 42 42 58 C 38 44 22 38 0 34 Z");
+        g.setPaint(new LinearGradientPaint(0, 0, 0, 58, new float[]{0f, .5f, 1f}, SILVER_RAMP));
+        g.fill(wing);
+        g.setStroke(new BasicStroke(1.2f)); g.setColor(new Color(60, 66, 96)); g.draw(wing);
+        g.setTransform(keep);
+    }
+
+    private static void flourish(Graphics2D g, double cx, double y, double half) {   // a line fading out at both ends, with a diamond in the middle
+        g.setPaint(new LinearGradientPaint((float) (cx - half), 0, (float) (cx + half), 0, new float[]{0f, .5f, 1f},
+            new Color[]{new Color(255, 205, 90, 0), new Color(255, 205, 90, 200), new Color(255, 205, 90, 0)}));
+        g.fill(new Rectangle2D.Double(cx - half, y, half * 2, 1.6));
+        gilded(g, poly(cx - 9, y + 0.8, cx, y - 7, cx + 9, y + 0.8, cx, y + 8.6), y - 7, y + 9);
+    }
+
+    private static void tab(Graphics2D g, double cx, double y, double w, String text, Color c1, Color c2) {   // the small ribbon on top of a panel
+        panel(g, cx - w / 2, y, w, 34, 10, new Color(255, 205, 90, 220), new GradientPaint(0, (float) y, c1, 0, (float) (y + 34), c2));
+        g.setFont(Type.royal(17, true, 0.22f));
+        Art.textCenter(g, text, cx - w / 2, w, y + 24, CREAM);
+    }
+
+    private void section(Graphics2D g, double x, double y, double w, double h) {   // a framed panel whose edge glows softly
+        panel(g, x, y, w, h, 22, new Color(255, 205, 90, (int) (130 + 50 * Math.sin(time * 1.8 + y * 0.01))), null);
+        g.setStroke(new BasicStroke(1f)); g.setColor(new Color(255, 205, 90, 55));
+        g.draw(poly(x + 7, y + 7, x + w - 22, y + 7, x + w - 7, y + 22, x + w - 7, y + h - 7, x + 22, y + h - 7, x + 7, y + h - 22));
+    }
+
+    private static BufferedImage lionPic;
+    private static boolean lionTried;
+
+    /** The gold lion lifted from the tabard of the knight picture (assets/lion.png); null if missing. */
+    private static synchronized BufferedImage lion() {
+        if (!lionTried) {
+            lionTried = true;
+            try { lionPic = javax.imageio.ImageIO.read(new java.io.File("assets/lion.png")); } catch (Exception e) { lionPic = null; }
+        }
+        return lionPic;
+    }
+
+    private static void lion(Graphics2D g, double x, double y, double k) {
+        BufferedImage l = lion();
+        if (l == null) return;
+        Object hint = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.drawImage(l, (int) Math.round(x), (int) Math.round(y), (int) Math.round(l.getWidth() * k), (int) Math.round(l.getHeight() * k), null);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, hint);
+    }
+
+    private static final Color INK = new Color(77, 50, 6);
+
+    /** A hanging banner at x (its left edge) that sways a little. */
+    private void banner(Graphics2D g, double x, boolean blue, double phase) {
+        AffineTransform keep = g.getTransform();
+        g.translate(x + 70, 12);
+        g.shear(0.025 * Math.sin(time * 1.1 + phase), 0);
+        g.translate(-70, -12);
+        g.setColor(new Color(202, 160, 68));
+        g.fill(new RoundRectangle2D.Double(-4, 0, 148, 12, 8, 8));
+        g.setStroke(new BasicStroke(2)); g.setColor(INK); g.draw(new RoundRectangle2D.Double(-4, 0, 148, 12, 8, 8));
+        Path2D body = poly(0, 12, 140, 12, 140, 226, 70, 262, 0, 226);
+        g.setPaint(new GradientPaint(0, 12, blue ? new Color(42, 84, 196) : new Color(179, 32, 44), 0, 262, blue ? new Color(20, 40, 110) : new Color(95, 15, 28)));
+        g.fill(body);
+        g.setStroke(new BasicStroke(3, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.setColor(INK); g.draw(body);
+        g.setStroke(new BasicStroke(5)); g.setColor(new Color(242, 181, 53));
+        g.draw(poly(10, 22, 130, 22, 130, 218, 70, 250, 10, 218));
+        lion(g, 34, 66, 0.7);
+        g.setTransform(keep);
+    }
+
+    /** A wall torch whose flame flickers; (x, y) is the top of its post. */
+    private void torch(Graphics2D g, double x, double y, double phase) {
+        Path2D post = poly(x - 6, y, x + 6, y, x + 10, y + 90, x - 10, y + 90);
+        g.setColor(new Color(60, 47, 44)); g.fill(post);
+        g.setStroke(new BasicStroke(3)); g.setColor(new Color(18, 12, 16)); g.draw(post);
+        gilded(g, poly(x - 26, y - 4, x + 26, y - 4, x + 18, y + 30, x - 18, y + 30), y - 4, y + 30);
+        gilded(g, new RoundRectangle2D.Double(x - 30, y - 10, 60, 9, 8, 8), y - 10, y - 1);
+        double flick = 1 + 0.06 * Math.sin(time * 13 + phase) + 0.04 * Math.sin(time * 29 + phase * 2);
+        if (fx) Art.glow(g, new Color(255, 150, 40), x, y - 40, 110, (float) (0.26 + 0.10 * Math.sin(time * 11 + phase) + 0.05 * Math.sin(time * 23 + phase)));
+        AffineTransform keep = g.getTransform();
+        g.translate(x, y - 8);
+        g.scale(1.25 / flick, 1.25 * flick);   // taller and a touch thinner when it leaps
+        g.setColor(new Color(255, 106, 20)); g.fill(path("M 0 8 C -24 -4 -26 -34 -8 -58 C -6 -42 4 -40 6 -62 C 26 -42 30 -10 0 8 Z"));
+        g.setColor(new Color(255, 176, 46)); g.fill(path("M 0 6 C -15 -4 -16 -26 -4 -42 C -2 -30 4 -30 6 -46 C 18 -30 18 -8 0 6 Z"));
+        g.setColor(new Color(255, 242, 168)); g.fill(path("M 0 4 C -8 -3 -8 -16 -1 -26 C 2 -16 7 -14 6 -4 C 5 1 2 3 0 4 Z"));
+        g.setTransform(keep);
+    }
+
+    /** A flag on a pole at px; dir = 1 waves to the right, -1 to the left. */
+    private void flag(Graphics2D g, double px, int dir, boolean blue, double phase) {
+        g.setColor(new Color(202, 160, 68)); g.fill(new Rectangle2D.Double(px - 4, 400, 8, 420));
+        g.setStroke(new BasicStroke(2)); g.setColor(INK); g.draw(new Rectangle2D.Double(px - 4, 400, 8, 420));
+        gilded(g, new Ellipse2D.Double(px - 9, 385, 18, 18), 385, 403);
+        AffineTransform keep = g.getTransform();
+        g.translate(px, 410);
+        g.scale(dir, 1);
+        double a = 10 * Math.sin(time * 2.3 + phase);
+        Path2D cloth = new Path2D.Double();
+        cloth.moveTo(4, 0); cloth.curveTo(60, -14 + a, 100, 14 - a, 156, 0); cloth.lineTo(140, 52); cloth.lineTo(156, 104);
+        cloth.curveTo(100, 118 - a, 60, 90 + a, 4, 104); cloth.closePath();
+        g.setPaint(new GradientPaint(0, 0, blue ? new Color(42, 84, 196) : new Color(179, 32, 44), 0, 104, blue ? new Color(20, 40, 110) : new Color(95, 15, 28)));
+        g.fill(cloth);
+        g.setStroke(new BasicStroke(3, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.setColor(INK); g.draw(cloth);
+        Path2D trim = new Path2D.Double();
+        trim.moveTo(14, 10); trim.curveTo(62, a * 0.8, 98, 22 - a * 0.8, 142, 10);
+        g.setStroke(new BasicStroke(4)); g.setColor(new Color(242, 181, 53)); g.draw(trim);
+        g.translate(46, 20 + a * 0.3);
+        lion(g, 0, 0, 0.5);
+        g.setTransform(keep);
+    }
+
+    private static void pedestal(Graphics2D g, double x, double w) {
+        Path2D base = poly(x, 818, x + w, 818, x + w - 26, 884, x + 26, 884);
+        g.setColor(new Color(42, 34, 52)); g.fill(base);
+        g.setStroke(new BasicStroke(3, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.setColor(new Color(14, 9, 18)); g.draw(base);
+        Path2D slab = poly(x - 10, 800, x + w + 10, 800, x + w, 826, x, 826);
+        g.setColor(new Color(74, 66, 88)); g.fill(slab);
+        g.setColor(new Color(14, 9, 18)); g.draw(slab);
+        g.setColor(new Color(21, 14, 27));
+        g.draw(new Line2D.Double(x + 30, 826, x + 70, 884)); g.draw(new Line2D.Double(x + 150, 826, x + 130, 884)); g.draw(new Line2D.Double(x + 240, 826, x + 262, 884));
+    }
+
+    /** Your knight (red or blue picture) holding its gun, with the picture's top-left at (x, y); mirror turns it to face left. */
+    private void creditsKnight(Graphics2D g, double x, double y, boolean blue, boolean mirror) {
+        double h = 398, bob = Math.sin(time * 1.8 + (blue ? 1 : 0)) * 2.5;
+        BufferedImage a = knightArt((int) Math.round(h * g.getTransform().getScaleY()), blue);
+        if (a == null) return;
+        double w = h * a.getWidth() / a.getHeight();
+        AffineTransform keep = g.getTransform();
+        Object hint = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.translate(x, y + bob);
+        if (mirror) { g.translate(w, 0); g.scale(-1, 1); }
+        g.scale(w / a.getWidth(), h / a.getHeight());
+        g.drawImage(a, 0, 0, null);
+        g.setTransform(keep);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, hint);
+        // the gun is held across the chest and tilted a little up toward the middle of the page
+        double k = 199.0 / 32, th = Math.toRadians(mirror ? 7 : -7), dx = (mirror ? -4 : 4) * k, dy = -5.1 * k;
+        double px = mirror ? x + w - 98 : x + 98, py = y + bob + 218;   // where the gun picture's top-left corner lands
+        g.translate(px - (dx * Math.cos(th) - dy * Math.sin(th)), py - (dx * Math.sin(th) + dy * Math.cos(th)));
+        g.rotate(th);
+        g.scale(mirror ? -k : k, k);
+        Art.gunArt(g, blue ? 1 : 0, 0, false);   // no gun picture: the knight simply stands unarmed
+        g.setTransform(keep);
+        if (fx) Art.glow(g, new Color(255, 210, 60), mirror ? x + w - 192 : x + 192, y + bob + 141, 42, (float) (0.14 + 0.08 * Math.sin(time * 2.6 + (blue ? 1 : 0))));   // the eyes breathe
+    }
+
+    private void creditsScenery(Graphics2D g, double ct) {
+        reveal(g, ease(ct / 0.8), () -> {
+            if (fx) {
+                Art.glow(g, new Color(255, 138, 60), 220, 560, 260, 0.16f);
+                Art.glow(g, new Color(79, 168, 255), 1380, 560, 260, 0.14f);
+            }
+            banner(g, 190, false, 0);
+            banner(g, 1270, true, 1.7);
+            torch(g, 112, 250, 0);
+            torch(g, 1488, 250, 2.1);
+            flag(g, 66, 1, false, 0.6);
+            flag(g, 1534, -1, true, 2.4);
+            pedestal(g, 60, 330);
+            pedestal(g, 1210, 330);
+            creditsKnight(g, 70, 408, false, false);
+            creditsKnight(g, 1221, 408, true, true);
+        });
+    }
+
     private void drawCredits(Graphics2D g) {
-        crown(g, VW / 2.0, 130, 0.9);
-        g.setFont(Type.royal(46, true, 0.22f));
-        Art.textCenter(g, "CREDITS", 0, VW, 200, GOLD);
-        g.setPaint(new LinearGradientPaint(400, 0, 1200, 0, new float[]{0f, .5f, 1f},
-            new Color[]{new Color(255, 205, 90, 0), new Color(255, 205, 90, 150), new Color(255, 205, 90, 0)}));
-        g.fill(new Rectangle2D.Double(400, 236, 800, 1.5));
-        g.fill(new Rectangle2D.Double(400, 780, 800, 1.5));
+        double ct = time - creditsStart, cx = VW / 2.0;
+        creditsScenery(g, ct);
+
+        reveal(g, ease(ct / 0.7), () -> {
+            if (fx) Art.glow(g, GOLD, cx, 150, 230, (float) (0.10 + 0.05 * Math.sin(time * 1.7)));
+            crown(g, cx, 94 + Math.sin(time * 1.6) * 2, 0.8);
+            shineText(g, "CREDITS", Type.logo(66), cx, 188, GOLD_RAMP, GOLD_DK, sweep(9.0, 2.8, 1.0));   // the one slow shine on the page
+            flourish(g, cx, 212, 400);
+        });
+
+        reveal(g, ease((ct - 0.3) / 0.7), () -> {
+            g.setPaint(new LinearGradientPaint((float) (cx - 260), 0, (float) (cx - 80), 0, new float[]{0f, 1f}, new Color[]{new Color(255, 205, 90, 0), new Color(255, 205, 90, 160)}));
+            g.fill(new Rectangle2D.Double(cx - 260, 238, 180, 1.4));
+            g.setPaint(new LinearGradientPaint((float) (cx + 80), 0, (float) (cx + 260), 0, new float[]{0f, 1f}, new Color[]{new Color(255, 205, 90, 160), new Color(255, 205, 90, 0)}));
+            g.fill(new Rectangle2D.Double(cx + 80, 238, 180, 1.4));
+            g.setFont(Type.hud(15, true, 0.5f));
+            Art.textCenter(g, "A GAME BY", 0, VW, 244, new Color(255, 205, 90, 210));
+        });
+
+        reveal(g, ease((ct - 0.45) / 0.7), () -> {
+            Font f = Type.royal(56, true, 0.12f);
+            g.setFont(f);
+            double tw = g.getFontMetrics().stringWidth("RAVEN SL"), x0 = cx - (100 + 22 + tw) / 2;
+            raven(g, x0, 260);
+            shineText(g, "RAVEN SL", f, x0 + 122 + tw / 2, 306, SILVER_RAMP, new Color(0, 0, 0, 170), -1);
+        });
+
+        reveal(g, ease((ct - 0.7) / 0.7), () -> {   // the three developers
+            section(g, 400, 352, 800, 156);
+            tab(g, cx, 335, 330, "DEVELOPMENT TEAM", new Color(150, 26, 40), new Color(88, 12, 26));
+            String[] names = {"BENUKA", "DILMI", "SENUK"};
+            for (int i = 0; i < 3; i++) {
+                double x = 533 + i * 267;
+                medallion(g, x, 416, 30);
+                shineText(g, names[i], Type.royal(27, true, 0.16f), x, 484, GOLD_RAMP, GOLD_DK, -1);
+            }
+            g.setPaint(new LinearGradientPaint(0, 395, 0, 495, new float[]{0f, .5f, 1f}, new Color[]{new Color(255, 205, 90, 0), new Color(255, 205, 90, 130), new Color(255, 205, 90, 0)}));
+            g.fill(new Rectangle2D.Double(666, 395, 1.4, 100));
+            g.fill(new Rectangle2D.Double(933, 395, 1.4, 100));
+        });
+
+        reveal(g, ease((ct - 0.95) / 0.7), () -> {   // the lecturer
+            section(g, 440, 548, 720, 70);
+            tab(g, cx, 531, 200, "LECTURER", new Color(24, 50, 120), new Color(10, 22, 70));
+            book(g, 498, 583, 28);
+            shineText(g, "DR. NADEESHA SANDAMALI", Type.royal(28, true, 0.14f), cx + 38, 594, GOLD_RAMP, GOLD_DK, -1);
+        });
+
+        reveal(g, ease((ct - 1.2) / 0.7), () -> {   // special thanks
+            section(g, 400, 662, 800, 96);
+            tab(g, cx, 645, 240, "SPECIAL THANKS", new Color(24, 50, 120), new Color(10, 22, 70));
+            university(g, 466, 708, 24);
+            g.setFont(Type.royal(20, true, 0.06f));
+            Art.text(g, "UNIVERSITY OF RUHUNA", 505, 706, new Color(255, 215, 120));
+            g.setFont(Type.hud(14, true, 0.3f));
+            Art.text(g, "FACULTY OF ENGINEERING", 505, 730, SOFT);
+            g.setPaint(new LinearGradientPaint(0, 676, 0, 748, new float[]{0f, .5f, 1f}, new Color[]{new Color(255, 205, 90, 0), new Color(255, 205, 90, 130), new Color(255, 205, 90, 0)}));
+            g.fill(new Rectangle2D.Double(858, 676, 1.4, 72));
+            crowd(g, 912, 708, 22);
+            g.setFont(Type.hud(15, true, 0.25f));
+            Art.text(g, "EVERYONE WHO", 968, 695, new Color(255, 215, 120));
+            Art.text(g, "SUPPORTED US", 968, 713, new Color(255, 215, 120));
+            g.setFont(Type.hud(12, true, 0.15f));
+            Art.text(g, "DURING THE DEVELOPMENT", 968, 732, SOFT);
+        });
+
+        reveal(g, ease((ct - 1.45) / 0.7), () -> button(g, cx - 150, 782, 300, "BACK TO MENU", false, this::back));
+
+        for (int i = 0; i < SPARKS.length; i++) {   // twinkling stars
+            double a = Math.pow(Math.max(0, Math.sin(time * 2.1 + i * 1.7)), 4), r = 3 + 8 * a;
+            if (a < 0.05 || ct < 1.0) continue;
+            double x = SPARKS[i][0], y = SPARKS[i][1];
+            Path2D.Double star = new Path2D.Double();
+            star.moveTo(x, y - r); star.quadTo(x, y, x + r, y); star.quadTo(x, y, x, y + r); star.quadTo(x, y, x - r, y); star.quadTo(x, y, x, y - r);
+            g.setColor(new Color(255, 248, 215, (int) (230 * a)));
+            g.fill(star);
+            if (fx) Art.glow(g, new Color(255, 220, 120), x, y, 14, (float) (0.5 * a));
+        }
         drawFooter(g, false);
     }
 

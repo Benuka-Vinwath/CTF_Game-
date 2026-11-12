@@ -17,7 +17,7 @@ import java.awt.image.BufferedImage;
 final class LobbyRoom {
     static final Color[] HAT_COLORS = {new Color(255, 205, 90), new Color(240, 240, 250), new Color(255, 120, 190),
         new Color(110, 230, 120), new Color(175, 110, 255), new Color(90, 225, 235)};
-    static final String[] HAT_NAMES = {"No hat", "Crown", "Top hat", "Horns", "Halo", "Cap"};
+    static final String[] HAT_NAMES = {"No hat", "Crown", "Top hat", "Horns", "Halo", "Wings"};
 
     private static final Color OUTSIDE = new Color(9, 7, 18);
     private BufferedImage still;
@@ -286,14 +286,16 @@ final class LobbyRoom {
                 g.setStroke(new BasicStroke(2.5f));
                 g.draw(new Ellipse2D.Double(cx - 13, top - 16, 26, 8));
             }
-            default -> {  // cap with a peak
-                g.setColor(c);
-                g.fill(new Arc2D.Double(cx - 12, top - 9, 24, 20, 0, 180, Arc2D.CHORD));
-                g.fill(new RoundRectangle2D.Double(cx - 2, top - 1, 18, 4, 3, 3));
-                g.setColor(dark);
-                g.draw(new Arc2D.Double(cx - 12, top - 9, 24, 20, 0, 180, Arc2D.CHORD));
-                g.setColor(Color.WHITE);
-                g.fill(new Ellipse2D.Double(cx - 2, top - 11, 4, 4));
+            default -> {  // wings, one each side of the helmet
+                for (int s = -1; s <= 1; s += 2) {
+                    Path2D.Double p = new Path2D.Double();
+                    p.moveTo(cx + s * 7, top + 7);
+                    p.curveTo(cx + s * 17, top + 8, cx + s * 24, top + 1, cx + s * 28, top - 9);
+                    p.curveTo(cx + s * 22, top - 6, cx + s * 19, top - 8, cx + s * 16, top - 13);
+                    p.curveTo(cx + s * 15, top - 5, cx + s * 11, top - 2, cx + s * 6, top);
+                    p.closePath();
+                    g.setColor(c); g.fill(p); g.setColor(dark); g.draw(p);
+                }
             }
         }
         g.setStroke(old);

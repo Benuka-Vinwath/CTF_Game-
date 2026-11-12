@@ -1240,7 +1240,7 @@ public class GamePanel extends JPanel {
         if (!p.alive) {
             Composite old = g.getComposite();
             g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.7f));
-            pixelArt(g, Art.spriteCrisp(p.team, 3, spriteK(g)), px, py + 18, false);
+            if (!drawKnight(g, p.team, 3, px, py + 18, false, 0, 0)) pixelArt(g, Art.spriteCrisp(p.team, 3, spriteK(g)), px, py + 18, false);
             g.setComposite(old);
             return;
         }
@@ -1261,9 +1261,11 @@ public class GamePanel extends JPanel {
         boolean left = Math.cos(aim) < 0;
         double cy0 = py - 5 + bob, y0 = cy0 - SH / 2;
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-        pixelArt(g, Art.spriteCrisp(p.team, frame, spriteK(g)), px, cy0, left);
         Protocol.LobbyEntry look = entry(p.id);   // the hat chosen at the lobby laptop, worn in the match too
-        if (look != null) LobbyRoom.hat(g, look.hat(), look.hatColor(), px, y0 + 6);
+        if (!drawKnight(g, p.team, frame, px, cy0, left, look == null ? 0 : look.hat(), look == null ? 0 : look.hatColor())) {
+            pixelArt(g, Art.spriteCrisp(p.team, frame, spriteK(g)), px, cy0, left);   // assets/knight*.png missing: the old sprite and hats
+            if (look != null) LobbyRoom.hat(g, look.hat(), look.hatColor(), px, y0 + 6);
+        }
         g.setComposite(keep);
 
         // Body energy cycle / magical invulnerability ring
@@ -1279,7 +1281,7 @@ public class GamePanel extends JPanel {
         g.scale(GUN_SCALE, GUN_SCALE);
         if (left) g.scale(1, -1); // keeps the grip underneath when aiming leftwards
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-        Art.gun(g, p.team, kick, ft > 0);
+        if (!Art.gunArt(g, p.team, kick, ft > 0)) Art.gun(g, p.team, kick, ft > 0);
         g.setComposite(keep);
         g.setTransform(old);
         if (ft > 0 && fx) Art.glow(g, Art.FX[p.team], px + Math.cos(aim) * 44, py - 4 + bob + Math.sin(aim) * 44, 38, 0.9f);
@@ -1293,6 +1295,41 @@ public class GamePanel extends JPanel {
             g.setColor(Color.WHITE);
             g.fill(ch);
         }
+    }
+
+    /**
+     * Draws the knight picture (red or blue by team) for a fighter whose sprite centre is (cx, cy), with the chosen hat.
+     * frame: 0 idle, 1 and 2 running (a small lean), 3 knocked out (tipped onto its side). False if the picture is missing.
+     */
+    private boolean drawKnight(Graphics2D g, int team, int frame, double cx, double cy, boolean left, int hat, int hatColor) {
+        double h = Art.SPR_H * PX;
+        BufferedImage a = MenuScreen.knightArt((int) Math.round(h * g.getTransform().getScaleY()), team == 1);
+        if (a == null) return false;
+        double w = h * a.getWidth() / a.getHeight();
+        AffineTransform keep = g.getTransform();
+        Object hint = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        if (frame == 3) {
+            g.translate(cx, cy);
+            g.rotate(Math.PI / 2);
+            g.translate(-w / 2, -h / 2 + 4);
+        } else {
+            g.translate(cx, cy + h / 2);   // stand on the feet
+            if (frame > 0) g.rotate((frame == 1 ? -1 : 1) * 0.07);
+            if (left) g.scale(-1, 1);
+            g.translate(-w / 2, -h);
+        }
+        AffineTransform at = g.getTransform();
+        g.scale(w / a.getWidth(), h / a.getHeight());
+        g.drawImage(a, 0, 0, null);
+        if (frame != 3 && hat > 0) {   // hats are drawn in the picture's own pixels
+            g.setTransform(at);
+            g.scale(w / MenuScreen.KNIGHT_W, h / MenuScreen.KNIGHT_H);
+            MenuScreen.knightHat(g, hat, LobbyRoom.HAT_COLORS[Math.floorMod(hatColor, LobbyRoom.HAT_COLORS.length)]);
+        }
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, hint);
+        g.setTransform(keep);
+        return true;
     }
 
     /** World units per sprite pixel: fighters are 43x58 world units (the original 24x32 at 1.8x). */

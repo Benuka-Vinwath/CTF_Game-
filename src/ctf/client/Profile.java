@@ -31,12 +31,12 @@ import java.util.prefs.Preferences;
  */
 final class Profile {
     static final String[] TITLES = {"RECRUIT", "SQUIRE", "KNIGHT", "MARKSMAN", "CHAMPION", "THRONE KEEPER", "VETERAN", "WARLORD", "LEGEND"};
-    static final String[] HAT_LOCK = {null, null, null, "STREAK_5", "SHUTOUT", "CAPTURES_10"};   // index = hat; null = free
+    static final String[] HAT_LOCK = {"REMOVED", null, "REMOVED", null, null, null};   // index = hat; null = free for everyone; "REMOVED" is never available: the picker offers only Crown, Horns, Halo and Wings, and the slots are kept so saved hat numbers still match
 
     /** id, what it says, what it unlocks. */
     static final String[][] ACHIEVEMENTS = {
-        {"FIRST_WIN", "FIRST WIN", "title: Squire"}, {"CAPTURES_10", "10 CAPTURES", "hat: Cap"}, {"TAGS_50", "50 TAGS", "title: Marksman"},
-        {"MVP_5", "5 \u00d7 MVP", "title: Throne Keeper"}, {"SHUTOUT", "3-0 WIN", "hat: Halo"}, {"STREAK_5", "5 WIN STREAK", "hat: Horns"},
+        {"FIRST_WIN", "FIRST WIN", "title: Squire"}, {"CAPTURES_10", "10 CAPTURES", "badge"}, {"TAGS_50", "50 TAGS", "title: Marksman"},
+        {"MVP_5", "5 \u00d7 MVP", "title: Throne Keeper"}, {"SHUTOUT", "3-0 WIN", "badge"}, {"STREAK_5", "5 WIN STREAK", "badge"},
         {"MATCHES_100", "100 MATCHES", "title: Veteran"}, {"MVP_4V4", "4v4 MVP", "title: Warlord"}, {"LEVEL_10", "LEVEL 10", "title: Legend"}};
     private static final String[] TITLE_LOCK = {null, "FIRST_WIN", "LEVEL_3", "TAGS_50", "LEVEL_5", "MVP_5", "MATCHES_100", "MVP_4V4", "LEVEL_10"};
 
