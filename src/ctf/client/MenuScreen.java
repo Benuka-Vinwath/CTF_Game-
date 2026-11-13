@@ -699,16 +699,6 @@ final class MenuScreen extends JComponent {
         }
     }
 
-    private void eyebrow(Graphics2D g, String text, double x, double y) {
-        g.setFont(Type.royal(18, false, 0.6f));
-        double w = g.getFontMetrics().getStringBounds(text, g).getWidth();
-        g.setPaint(new GradientPaint((float) x, 0, new Color(255, 205, 90, 0), (float) (x + 54), 0, GOLD));
-        g.fill(new Rectangle2D.Double(x, y - 6, 54, 1.5));
-        Art.text(g, text, x + 68, y, SOFT);
-        g.setPaint(new GradientPaint((float) (x + 82 + w), 0, GOLD, (float) (x + 136 + w), 0, new Color(255, 205, 90, 0)));
-        g.fill(new Rectangle2D.Double(x + 82 + w, y - 6, 54, 1.5));
-    }
-
     private void drawProfile(Graphics2D g) {
         double x = 1229, y = 40, w = 345, h = 74;
         RoundRectangle2D card = new RoundRectangle2D.Double(x, y, w, h, 14, 14);
@@ -812,7 +802,6 @@ final class MenuScreen extends JComponent {
 
     /** time >= 0 makes the halo float and the wings flap; -1 keeps them still. */
     static void knightHat(Graphics2D g, int hat, Color c, double time) {
-        Color white = new Color(255, 255, 255, 105);
         switch (hat) {
             case 1 -> {   // crown
                 solid(g, path("M 360 206 L 350 104 L 420 158 L 497 72 L 574 158 L 644 104 L 634 206 Q 497 234 360 206 Z"), c);

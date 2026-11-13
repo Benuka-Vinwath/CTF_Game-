@@ -313,7 +313,7 @@ final class Music {
     /** Heavy bell / gong: inharmonic partials with long decay. */
     private static void bell(double[] mix, double start, double f, double amp) {
         double[] ratio = {0.5, 1, 1.19, 1.56, 2.0, 2.76, 4.07}, gain = {0.8, 1, 0.5, 0.45, 0.35, 0.22, 0.12}, decay = {8, 7, 5, 4.5, 3.6, 2.6, 1.8};
-        int s0 = (int) (start * SR), cnt = (int) (8 * SR);
+        int s0 = (int) (start * SR), cnt = 8 * SR;
         for (int i = 0; i < cnt; i++) {
             double t = (double) i / SR, v = 0;
             for (int p = 0; p < ratio.length; p++) v += gain[p] * Math.exp(-t * 6.9 / decay[p]) * Math.sin(2 * Math.PI * f * ratio[p] * t);
