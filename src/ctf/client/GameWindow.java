@@ -47,6 +47,7 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
         pack();
         setLocationRelativeTo(null);
         menu.start();
+        Music.play(Music.Track.MENU);   // the menu theme plays while the menu is on screen
     }
 
     private void show(JComponent c) {
@@ -161,6 +162,7 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
         leaving = false;
         show(menu);
         menu.start();
+        Music.play(Music.Track.MENU);   // back to the calmer menu theme
     }
 
     // ------------------------------------------------------------------ fullscreen (F11 in the menu and in the game)

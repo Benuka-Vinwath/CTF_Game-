@@ -6,42 +6,152 @@ import javax.sound.sampled.*;
  * "Grand empire" battle music, synthesised at start-up (no audio files): a 24-bar loop in D minor at 84 BPM, built
  * like a film-score march: timpani and snare, a marching string ostinato, a choir, and a brass theme that rises from a
  * brooding minor melody (theme A) to a soaring fanfare in harmony with crashes and a gong (theme B), then turns back
- * through the dominant into the loop. An original piece. M toggles it. Fails silently with no audio device.
+ * through the dominant into the loop (it plays in the lobby and the match). The menus have their own, calmer theme (see renderMenu).
+ * Both are original pieces. M toggles the music. Fails silently with no audio device.
  */
 final class Music {
     private static final int SR = 32000;
     private static final double BPM = 84, BEAT = 60.0 / BPM;
-    private static Clip clip;
-    private static boolean wanted = true, building;
+    enum Track { MENU, BATTLE }
 
-    /** Starts the loop once; building it takes a few seconds, so it happens off the UI thread. */
-    static synchronized void start() {
-        if (clip != null || building) return;
-        building = true;
-        Thread t = new Thread(() -> {
+    private static final Clip[] clips = new Clip[2];
+    private static final boolean[] building = new boolean[2];
+    private static Track current = Track.MENU;
+    private static boolean wanted = true;
+    private static float volume = 0.8f;
+
+    /** The match and lobby theme (the original battle march); kept for the places that already call it. */
+    static void start() { play(Track.BATTLE); }
+
+    /** Switches to a track and loops it. Building one takes a few seconds, so that happens off the UI thread; only the first time. */
+    static synchronized void play(Track t) {
+        current = t;
+        int i = t.ordinal();
+        for (int j = 0; j < clips.length; j++) if (j != i && clips[j] != null) clips[j].stop();
+        Clip c = clips[i];
+        if (c != null) {
+            if (wanted && !c.isRunning()) { c.setFramePosition(0); c.loop(Clip.LOOP_CONTINUOUSLY); }
+            return;
+        }
+        if (building[i]) return;
+        building[i] = true;
+        Thread th = new Thread(() -> {
             try {
-                byte[] pcm = render();
-                Clip c = AudioSystem.getClip();
-                c.open(new AudioFormat(SR, 16, 1, true, false), pcm, 0, pcm.length);
-                if (c.isControlSupported(FloatControl.Type.MASTER_GAIN)) ((FloatControl) c.getControl(FloatControl.Type.MASTER_GAIN)).setValue(-8f);
+                byte[] pcm = t == Track.MENU ? renderMenu() : render();
+                Clip nc = AudioSystem.getClip();
+                nc.open(new AudioFormat(SR, 16, 1, true, false), pcm, 0, pcm.length);
                 synchronized (Music.class) {
-                    clip = c;
-                    if (wanted) c.loop(Clip.LOOP_CONTINUOUSLY);
+                    clips[i] = nc;
+                    gain(nc);
+                    if (wanted && current == t) nc.loop(Clip.LOOP_CONTINUOUSLY);
                 }
             } catch (Exception | Error ignored) { /* no audio device */ }
-            building = false;
-        }, "music");
-        t.setDaemon(true);
-        t.start();
+            synchronized (Music.class) { building[i] = false; }
+        }, "music-" + t);
+        th.setDaemon(true);
+        th.start();
     }
 
     static synchronized void toggle() {
         wanted = !wanted;
-        if (clip == null) return;
-        if (wanted) clip.loop(Clip.LOOP_CONTINUOUSLY); else clip.stop();
+        Clip c = clips[current.ordinal()];
+        if (c == null) return;
+        if (wanted) c.loop(Clip.LOOP_CONTINUOUSLY); else c.stop();
     }
 
     static synchronized boolean isOn() { return wanted; }
+
+    /** 0..1, the same volume setting as the sound effects (0.8 is the original loudness). */
+    static synchronized void setVolume(float v) {
+        volume = v;
+        for (Clip c : clips) if (c != null) gain(c);
+    }
+
+    private static void gain(Clip c) {
+        if (!c.isControlSupported(FloatControl.Type.MASTER_GAIN)) return;
+        FloatControl f = (FloatControl) c.getControl(FloatControl.Type.MASTER_GAIN);
+        double db = volume <= 0.001f ? f.getMinimum() : -8 + 20 * Math.log10(volume / 0.8);
+        f.setValue((float) Math.max(f.getMinimum(), Math.min(f.getMaximum(), db)));
+    }
+
+    /** Peak-normalises and converts the mix to 16-bit PCM. */
+    private static byte[] toPcm(double[] mix) {
+        int n = mix.length;
+        double peak = 1e-9;
+        for (double v : mix) peak = Math.max(peak, Math.abs(Math.tanh(v * 1.3)));
+        byte[] out = new byte[n * 2];
+        for (int i = 0; i < n; i++) {
+            int s = (int) (Math.tanh(mix[i] * 1.3) / peak * 0.86 * 32767);
+            out[2 * i] = (byte) s;
+            out[2 * i + 1] = (byte) (s >> 8);
+        }
+        return out;
+    }
+
+    // ---------------------------------------------------------------- the menu theme
+
+    /**
+     * The menu theme: the same key (D minor) and the same opening motif as the battle march, but slow and warm. 16 bars at 68 BPM:
+     * a choir and strings pad, a plucked harp running through each chord, a soft horn singing the theme, a distant gong and a quiet
+     * timpani heartbeat. The reverb wraps round the loop, so the end flows back into the start.
+     */
+    private static byte[] renderMenu() {
+        final double beat = 60.0 / 68, len8 = 8 * beat;
+        final int n = (int) (16 * 4 * beat * SR);
+        double[] mix = new double[n];
+        // one chord per two bars: Dm Bb Gm A | Dm Bb C A
+        int[][] chords = {{50, 53, 57}, {46, 50, 53}, {55, 58, 62}, {57, 61, 64}, {50, 53, 57}, {46, 50, 53}, {48, 52, 55}, {57, 61, 64}};
+        int[] roots = {38, 34, 31, 33, 38, 34, 36, 33};
+        double[][][] tune = new double[8][][];   // horn theme per chord: {midi, start beat, length in beats}
+        tune[2] = new double[][]{{70, 0, 2}, {69, 2, 1}, {67, 3, 1}, {65, 4, 2}, {67, 6, 2}};
+        tune[3] = new double[][]{{64, 0, 2}, {65, 2, 1}, {67, 3, 1}, {69, 4, 4}};
+        tune[4] = new double[][]{{74, 0, 3}, {72, 3, 1}, {70, 4, 2}, {69, 6, 2}};
+        tune[5] = new double[][]{{70, 0, 2}, {74, 2, 2}, {77, 4, 2}, {74, 6, 2}};
+        tune[6] = new double[][]{{76, 0, 3}, {74, 3, 1}, {72, 4, 2}, {67, 6, 2}};
+        tune[7] = new double[][]{{69, 0, 2}, {73, 2, 2}, {76, 4, 3}, {74, 7, 1}};
+        int[] pat = {0, 1, 2, 1};
+        for (int c = 0; c < 8; c++) {
+            final double t0 = c * len8;
+            final boolean second = c >= 4;
+            for (int note : chords[c]) {
+                final double f = hz(note);
+                choir(mix, t0 - 0.4, len8 + 1.0, f * 2, second ? 0.075 : 0.06);
+                if (second) choir(mix, t0 - 0.4, len8 + 1.0, f * 4, 0.035);
+                for (double det : new double[]{-0.004, 0.0, 0.004})
+                    sawVoice(mix, t0 - 0.3, len8 + 0.8, 1.2, 1.4, f * 2 * (1 + det), 0.02, 0.06);
+            }
+            sine(mix, t0, len8, hz(roots[c] - 12), 0.15);
+            sawVoice(mix, t0, len8, 0.7, 1.0, hz(roots[c]), 0.10, 0.08);
+            if (c >= 1) {   // the harp
+                for (int e = 0; e < 16; e++)
+                    pluck(mix, t0 + e * beat / 2, hz(chords[c][pat[e % 4]] + 12 + (e % 8 == 7 ? 12 : 0)), e % 4 == 0 ? 0.075 : 0.045);
+            }
+            if (tune[c] != null) for (double[] nt : tune[c]) {
+                double st = t0 + nt[1] * beat, ln = nt[2] * beat;
+                brass(mix, st, ln, hz(nt[0]), 0.20, false);
+                brass(mix, st, ln, hz(nt[0] - 12), 0.14, false);
+            }
+            if (c == 0 || c == 4) bell(mix, t0, hz(38), 0.22);
+            if (c >= 2) for (int bar = 0; bar < 2; bar++) {
+                timp(mix, t0 + bar * 4 * beat, 38, 0.30);
+                timp(mix, t0 + bar * 4 * beat + 2 * beat, 45, 0.16);
+            }
+        }
+        swell(mix, (16 * 4 - 4) * beat, 4 * beat, 0.10);   // a soft rise that leads back into the start
+        reverb(mix);
+        return toPcm(mix);
+    }
+
+    /** A plucked, harp-like note: a bright attack and a quick decay. */
+    private static void pluck(double[] mix, double start, double f, double amp) {
+        int s0 = (int) (start * SR), cnt = (int) (1.8 * SR);
+        for (int i = 0; i < cnt; i++) {
+            double t = (double) i / SR;
+            double v = Math.sin(2 * Math.PI * f * t) * Math.exp(-t * 3.0) + 0.45 * Math.sin(2 * Math.PI * 2 * f * t) * Math.exp(-t * 5.5)
+                + 0.2 * Math.sin(2 * Math.PI * 3 * f * t) * Math.exp(-t * 9);
+            mix[idx(mix, s0 + i)] += v * amp * Math.min(1, t / 0.003);
+        }
+    }
 
     // ---------------------------------------------------------------- the score
 
@@ -134,15 +244,7 @@ final class Music {
         }
 
         reverb(mix);
-        double peak = 1e-9;
-        for (double v : mix) peak = Math.max(peak, Math.abs(Math.tanh(v * 1.3)));
-        byte[] out = new byte[n * 2];
-        for (int i = 0; i < n; i++) {
-            int s = (int) (Math.tanh(mix[i] * 1.3) / peak * 0.86 * 32767);
-            out[2 * i] = (byte) s;
-            out[2 * i + 1] = (byte) (s >> 8);
-        }
-        return out;
+        return toPcm(mix);
     }
 
     // ---------------------------------------------------------------- instruments
