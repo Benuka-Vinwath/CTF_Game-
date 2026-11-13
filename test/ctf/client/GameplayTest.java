@@ -45,6 +45,7 @@ public class GameplayTest {
         runTest("Wide/Tall Windows Are Filled With Scenery (No Black Bars)", GameplayTest::testViewFillsWindow);
         runTest("Lobby Room Draws, Ready Button Clicks, ENTER Chat Sends", GameplayTest::testLobbyRoom);
         runTest("Menu: Clicking HOST And JOIN Buttons Reaches The Game", GameplayTest::testMenuButtons);
+        runTest("Menu: QUIT Asks First", GameplayTest::testQuitAsksFirst);
         runTest("Esc Menu: Leave Lobby At Once, Quit Mid-Match Asks First", GameplayTest::testEscMenu);
         runTest("Profile Database: Matches, XP, Levels, Achievements, Locks, Reset", GameplayTest::testProfile);
         runTest("online-server.txt: Address Read, Comments Skipped, Missing = No Button", GameplayTest::testOnlineServerFile);
@@ -554,7 +555,7 @@ public class GameplayTest {
         };
         onEdt(() -> {
             paint.run();
-            click.accept(200, 440);   // PLAY on the main menu
+            click.accept(200, 335);   // PLAY on the main menu (first row)
             paint.run();
             click.accept(217, 703);   // HOST button inside the host card
             paint.run();
@@ -563,6 +564,45 @@ public class GameplayTest {
         try { node.removeNode(); } catch (Exception ignored) { /* test settings only */ }
         assertTrue(did.contains("host"), "clicking HOST hosts (" + did + ")");
         assertTrue(did.contains("join localhost"), "clicking JOIN joins the typed address (" + did + ")");
+    }
+
+    /** Choosing QUIT opens the "leave the throne room?" message; only its QUIT button (or ENTER after a moment) really quits. */
+    static void testQuitAsksFirst() {
+        java.util.List<String> did = new java.util.ArrayList<>();
+        java.util.prefs.Preferences node = java.util.prefs.Preferences.userRoot().node("ctf-quit-test-" + System.nanoTime());
+        java.nio.file.Path dir;
+        try { dir = java.nio.file.Files.createTempDirectory("throne-quit"); } catch (java.io.IOException e) { throw new RuntimeException(e); }
+        MenuScreen menu = new MenuScreen(new MenuScreen.Actions() {
+            public void host() {}
+            public void join(String address) {}
+            public void quit() { did.add("quit"); }
+            public void toggleFullscreen() {}
+            public boolean fullscreen() { return false; }
+        }, new Profile(dir.resolve("profile.db"), node));
+        menu.setSize(1600, 900);
+        BufferedImage img = new BufferedImage(1600, 900, BufferedImage.TYPE_INT_RGB);
+        Runnable paint = () -> { Graphics2D g = img.createGraphics(); menu.paint(g); g.dispose(); };
+        java.util.function.BiConsumer<Integer, Integer> click = (x, y) -> {
+            for (java.awt.event.MouseListener l : menu.getMouseListeners())
+                l.mousePressed(new java.awt.event.MouseEvent(menu, java.awt.event.MouseEvent.MOUSE_PRESSED, 0, 0, x, y, 1, false, java.awt.event.MouseEvent.BUTTON1));
+        };
+        onEdt(() -> {
+            paint.run();
+            click.accept(200, 685);   // the QUIT row (the sixth)
+            paint.run();
+            assertTrue(did.isEmpty(), "choosing QUIT does not quit yet (" + did + ")");
+            click.accept(50, 50);     // outside the message box: nothing happens
+            paint.run();
+            assertTrue(did.isEmpty(), "a click outside the message does not quit (" + did + ")");
+            click.accept(670, 547);   // STAY
+            paint.run();
+            assertTrue(did.isEmpty(), "STAY does not quit (" + did + ")");
+            click.accept(200, 685);   // ask again
+            paint.run();
+            click.accept(930, 547);   // QUIT in the message
+            assertTrue(did.contains("quit"), "the message's QUIT button quits (" + did + ")");
+        });
+        try { node.removeNode(); } catch (Exception ignored) { /* test settings only */ }
     }
 
     static void testEscMenu() {
