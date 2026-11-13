@@ -56,7 +56,7 @@ public class GameState {
     private double tentCooldown;
     private double endElapsed;
     private double countdown;     // > 0 while the host's start is counting down in the lobby
-    private int mode = 1;         // players per team: 1 = 1v1 ... 4 = 4v4. The host picks it; it grows when a team overflows
+    private int mode;             // players per team: 1 = 1v1 ... 4 = 4v4. The host picks it; joins past it are refused
     private int winner = -1;
     private long tick;
     private int nextId = 1;
@@ -67,6 +67,7 @@ public class GameState {
 
     public GameState(int minPlayers, int udpPort, Random rng) {
         this.minPlayers = minPlayers;
+        this.mode = Math.max(1, Math.min((minPlayers + 1) / 2, MAX_TEAM));   // a server started for 4 players opens as 2v2
         this.udpPort = udpPort;
         this.rng = rng;
     }
@@ -77,10 +78,9 @@ public class GameState {
 
     /** hat and hatColor were chosen in the main menu; they are wrapped into range like setLook does. */
     public synchronized Player addPlayer(String name, int team, int hat, int hatColor, int level, int title, Conn conn) {
-        if (players.size() >= MAX_PLAYERS) return null;
+        if (players.size() >= 2 * mode) return null;   // both teams full at this match size (1v1 holds 2): refuse, lobby or mid-match
         if (team != 0 && team != 1) team = teamSize(0) <= teamSize(1) ? 0 : 1;   // auto-balance
-        if (teamSize(team) >= MAX_TEAM) team = 1 - team;
-        if (teamSize(team) >= mode) mode = teamSize(team) + 1;   // a full team: the match grows (1v1 -> 2v2)
+        if (teamSize(team) >= mode) team = 1 - team;   // asked for a full team: the other one has room
         Player p = new Player(nextId++, name, team, rng.nextInt(Integer.MAX_VALUE), conn);
         p.hat = Math.floorMod(hat, LobbyMap.HATS);
         p.hatColor = Math.floorMod(hatColor, LobbyMap.HAT_COLORS);

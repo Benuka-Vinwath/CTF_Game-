@@ -115,8 +115,10 @@ public class ServerLogicTest {
         check(g.countdown() == 0, "un-readying stops the countdown");
         ticks(COUNTDOWN_TICKS);
         check(g.phase() == GameState.Phase.LOBBY, "and the match does not start");
-        g.setReady(p(1).id, true);
+        newLobby(0);   // solo test server: one ready player may start, and a 1v1 still has a free slot
+        g.setReady(p(0).id, true);
         g.begin(p(0).id);
+        check(g.countdown() > 0, "the solo server counts down for one ready player");
         g.addPlayer("Late", -1, new FakeConn());
         check(g.countdown() == 0, "a new unready player stops the countdown too");
     }
@@ -151,8 +153,10 @@ public class ServerLogicTest {
         check(g.countdown() > 0, "2v2 starts once both teams have two ready players");
         g.setMode(p(0).id, 1);
         check(g.mode() == 2, "the size cannot drop below a team's current size");
-        g.addPlayer("E", -1, new FakeConn());
-        check(g.mode() == 3 && g.countdown() == 0, "a fifth player grows the match to 3v3 and stops the countdown");
+        check(g.addPlayer("E", -1, new FakeConn()) == null, "a fifth player is refused by a full 2v2");
+        check(g.mode() == 2 && g.countdown() > 0, "the refused player changes nothing");
+        g.setMode(p(0).id, 3);
+        check(g.mode() == 3 && g.countdown() == 0, "the host can grow the match to 3v3, which stops the countdown");
         place(c, LobbyMap.PADS[1][0], LobbyMap.PADS[1][1]);
         g.tick();
         check(c.team == 1, "pads allow moving while the other team has room");
@@ -455,16 +459,22 @@ public class ServerLogicTest {
 
     void lateJoinerDropsStraightIn() {
         newGame(0, 1);
+        check(g.addPlayer("Third", -1, new FakeConn()) == null, "a third player is refused by a running 1v1");
+        g.removePlayer(p(1).id);
         FakeConn c = new FakeConn();
         Player late = g.addPlayer("Late", -1, c);
-        check(late != null && c.got("START") && late.alive, "someone joining a running game gets START and spawns");
-        check(late.team == 0 || late.team == 1, "auto team is assigned");
+        check(late != null && c.got("START") && late.alive, "someone filling a free slot in a running game gets START and spawns");
+        check(late.team == 1, "they take the team that has room");
     }
 
     void serverFullIsRefused() {
         g = new GameState(2, 5000, new Random(1));
+        check(g.addPlayer("A", 0, new FakeConn()) != null && g.addPlayer("B", 0, new FakeConn()).team == 1,
+                "asking for a full team puts you on the other one");
+        check(g.addPlayer("C", -1, new FakeConn()) == null, "a third player is refused by a full 1v1 lobby");
+        g = new GameState(GameState.MAX_PLAYERS, 5000, new Random(1));
         for (int i = 0; i < GameState.MAX_PLAYERS; i++) g.addPlayer("P" + i, -1, new FakeConn());
-        check(g.addPlayer("Extra", -1, new FakeConn()) == null, "the ninth player is refused");
+        check(g.addPlayer("Extra", -1, new FakeConn()) == null, "the ninth player is refused by a full 4v4");
     }
 
     /** Over a real socket: an old game version is refused with a clear message, the current one is welcomed. */
