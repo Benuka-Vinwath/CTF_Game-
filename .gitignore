@@ -12,3 +12,7 @@ Thumbs.db
 
 # Logs from running the client or server
 *.log
+build/
+dist/
+release/
+*.zip
