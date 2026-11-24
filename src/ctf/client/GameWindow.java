@@ -2,6 +2,7 @@ package ctf.client;
 
 import ctf.client.net.NetClient;
 import ctf.client.net.NetEvents;
+import ctf.common.Protocol;
 import ctf.common.Snapshot;
 import ctf.server.GameServer;
 
@@ -20,6 +21,7 @@ import java.io.IOException;
  * All NetEvents methods run on network threads, so anything that touches Swing is wrapped in invokeLater.
  */
 public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions, GamePanel.Exits {
+    private static final long serialVersionUID = 1L;
     static final int PORT = 5000;
 
     private final Profile profile = Profile.open();   // SQLite file in the user folder: name, looks, XP, match history
@@ -75,23 +77,47 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
     }
 
     @Override
-    public void join(String address) {
-        String host = address;
-        int port = PORT;
-        int colon = address.lastIndexOf(':');
-        if (colon > 0 && address.indexOf(':') == colon) {   // "host:port", but leave IPv6 addresses alone
-            try {
-                port = Integer.parseInt(address.substring(colon + 1).trim());
-                host = address.substring(0, colon).trim();
-            } catch (NumberFormatException e) {
-                menu.setStatus("The port after ':' must be a number.", true, false);
-                return;
-            }
-        }
-        connect(host, port);
+    public void join(String address) { online(address, Protocol.QUICK); }
+
+    /** Enter a room on that server: Protocol.QUICK, Protocol.create(...) or Protocol.join(code). */
+    @Override
+    public void online(String address, String room) {
+        Object[] hp = hostPort(address);
+        if (hp == null) { menu.setStatus("The port after ':' must be a number.", true, false); return; }
+        connect((String) hp[0], (Integer) hp[1], room);
     }
 
-    private void connect(String host, int port) {
+    /** Asks the server for its public rooms in the background; the menu gets the list (or why it failed). */
+    @Override
+    public void listRooms(String address) {
+        Object[] hp = hostPort(address);
+        if (hp == null) { menu.setRooms(null, "The port after ':' must be a number."); return; }
+        new Thread(() -> {
+            try {
+                java.util.List<Protocol.RoomInfo> rooms = NetClient.listRooms((String) hp[0], (Integer) hp[1]);
+                SwingUtilities.invokeLater(() -> menu.setRooms(rooms, null));
+            } catch (IOException e) {
+                SwingUtilities.invokeLater(() -> menu.setRooms(null, "Could not reach the server."));
+            }
+        }, "list-rooms").start();
+    }
+
+    /** {host, port} from "host" or "host:port" (IPv6 addresses are left alone), or null if the port is not a number. */
+    private static Object[] hostPort(String address) {
+        int colon = address.lastIndexOf(':');
+        if (colon > 0 && address.indexOf(':') == colon) {
+            try {
+                return new Object[]{address.substring(0, colon).trim(), Integer.parseInt(address.substring(colon + 1).trim())};
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return new Object[]{address, PORT};
+    }
+
+    private void connect(String host, int port) { connect(host, port, Protocol.QUICK); }
+
+    private void connect(String host, int port, String room) {
         if (client != null) return;
         menu.setStatus("Connecting to " + host + "...", false, true);
         String name = menu.playerName();
@@ -100,7 +126,7 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
             NetClient c = new NetClient(this);
             client = c;   // set first: events can arrive as soon as connect() returns
             try {
-                c.connect(host, port, name, profile.favouriteTeam(), hat, color, profile.level(), profile.title());
+                c.connect(host, port, name, profile.favouriteTeam(), hat, color, profile.level(), profile.title(), room);
             } catch (IOException ex) {
                 client = null;
                 SwingUtilities.invokeLater(() -> menu.setStatus("Could not reach " + host + ":" + port + ". Check the address and that the host is in the game.", true, false));

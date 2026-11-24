@@ -43,6 +43,8 @@ public class NetClient implements NetLink {
     private final Map<Integer, String> names = new ConcurrentHashMap<>();
     private volatile Map<Integer, Protocol.Stat> stats = Map.of();
     private volatile Protocol.Lobby lobby;
+    private volatile String roomCode;   // from the ROOM line
+    private volatile boolean roomPublic;
 
     private volatile DatagramSocket udp;
     private volatile InetSocketAddress udpServer;
@@ -74,8 +76,15 @@ public class NetClient implements NetLink {
     /** Blocks briefly. Call from a background thread. team: 0 red, 1 blue, -1 automatic. */
     public void connect(String host, int port, String name, int team) throws IOException { connect(host, port, name, team, 0, 0, 1, 0); }
 
-    /** hat / color: the look picked in the main menu; level / title: from the profile. All sent with HELLO. */
     public void connect(String host, int port, String name, int team, int hat, int color, int level, int title) throws IOException {
+        connect(host, port, name, team, hat, color, level, title, Protocol.QUICK);
+    }
+
+    /**
+     * hat / color: the look picked in the main menu; level / title: from the profile. All sent with HELLO.
+     * room: which room to enter (Protocol.QUICK, Protocol.create(...), Protocol.join(code)).
+     */
+    public void connect(String host, int port, String name, int team, int hat, int color, int level, int title, String room) throws IOException {
         tcp = new Socket();
         tcp.connect(new InetSocketAddress(host, port), 3000);
         tcp.setTcpNoDelay(true);
@@ -88,7 +97,7 @@ public class NetClient implements NetLink {
         reader.setDaemon(true);
         reader.start();
 
-        sendTcp("HELLO " + team + " " + Protocol.cleanName(name) + " " + hat + " " + color + " " + level + " " + title + " " + Protocol.VERSION);
+        sendTcp("HELLO " + team + " " + Protocol.cleanName(name) + " " + hat + " " + color + " " + level + " " + title + " " + Protocol.VERSION + " " + room);
         scheduler.scheduleAtFixedRate(() -> sendTcp("PING " + System.nanoTime()),
                 2, 2, TimeUnit.SECONDS);
     }
@@ -128,6 +137,11 @@ public class NetClient implements NetLink {
                 case "CHAT" -> {   // CHAT id name: text
                     String[] t = arg.split(" ", 2);
                     if (t.length == 2) events.onChat(Integer.parseInt(t[0]), t[1]);
+                }
+                case "ROOM" -> {   // ROOM code public|private, just before WELCOME
+                    String[] t = arg.split(" ");
+                    roomCode = t[0];
+                    roomPublic = t.length > 1 && t[1].equals("public");
                 }
                 case "START" -> events.onStart();
                 case "STATS" -> {
@@ -171,6 +185,27 @@ public class NetClient implements NetLink {
 
     @Override
     public Protocol.Lobby lobby() { return lobby; }
+
+    @Override
+    public String roomCode() { return roomCode; }
+
+    @Override
+    public boolean roomPublic() { return roomPublic; }
+
+    /** The public rooms on a server: a short separate connection that asks ROOMS and reads one line. Blocks up to ~6 s. */
+    public static java.util.List<Protocol.RoomInfo> listRooms(String host, int port) throws IOException {
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(host, port), 3000);
+            s.setSoTimeout(3000);
+            PrintWriter out = new PrintWriter(s.getOutputStream(), true, StandardCharsets.UTF_8);
+            BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8));
+            out.println("ROOMS");
+            String line = in.readLine();
+            if (line == null) throw new IOException("no answer");
+            if (line.startsWith("ERROR")) throw new IOException(line.substring(5).trim());
+            return Protocol.decodeRooms(line);
+        }
+    }
 
     @Override
     public void sendChat(String text) {

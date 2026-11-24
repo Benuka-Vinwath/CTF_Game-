@@ -494,13 +494,137 @@ public class ServerLogicTest {
         }
     }
 
+    /** The first reply that is not the ROOM line. */
     private static String helloReply(int port, String hello) throws java.io.IOException {
-        try (java.net.Socket s = new java.net.Socket("127.0.0.1", port)) {
+        try (Client c = new Client(port)) {
+            c.send(hello);
+            String line = c.read();
+            return line != null && line.startsWith("ROOM ") ? c.read() : line;
+        }
+    }
+
+    /** A raw TCP client for the socket tests. */
+    private static final class Client implements AutoCloseable {
+        final java.net.Socket s;
+        final java.io.PrintWriter out;
+        final java.io.BufferedReader in;
+
+        Client(int port) throws java.io.IOException {
+            s = new java.net.Socket("127.0.0.1", port);
             s.setSoTimeout(3000);
-            java.io.PrintWriter out = new java.io.PrintWriter(s.getOutputStream(), true);
-            java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(s.getInputStream()));
-            out.println(hello);
-            return in.readLine();
+            out = new java.io.PrintWriter(s.getOutputStream(), true);
+            in = new java.io.BufferedReader(new java.io.InputStreamReader(s.getInputStream()));
+        }
+
+        void send(String line) { out.println(line); }
+        String read() throws java.io.IOException { return in.readLine(); }
+        @Override public void close() throws java.io.IOException { s.close(); }
+    }
+
+    // ------------------------------------------------------------------ rooms
+
+    private static RoomManager.Joined joinRoom(RoomManager rm, String request, String name, FakeConn c) {
+        return rm.join(request, name, -1, 0, 0, 1, 0, c);
+    }
+
+    void roomsAreSeparateMatches() {
+        RoomManager rm = new RoomManager(2, 5000, new Random(1));
+        FakeConn a1 = new FakeConn(), a2 = new FakeConn(), b1 = new FakeConn(), b2 = new FakeConn();
+        RoomManager.Joined ja = joinRoom(rm, Protocol.create(1, false), "Alpha", a1);
+        String codeA = ja.room().code;
+        check(codeA.length() == RoomManager.CODE_LEN && codeA.chars().allMatch(ch -> RoomManager.ALPHABET.indexOf(ch) >= 0),
+                "a room code is 4 easy-to-read characters (" + codeA + ")");
+        check(a1.lines.get(0).equals("ROOM " + codeA + " private") && a1.lines.get(1).startsWith("WELCOME"),
+                "the ROOM line comes before WELCOME");
+        RoomManager.Joined ja2 = joinRoom(rm, Protocol.join(codeA.toLowerCase()), "Alpha2", a2);
+        check(ja2.room() == ja.room(), "a friend joins by code, in any letter case");
+        RoomManager.Joined jb = joinRoom(rm, Protocol.create(1, false), "Bravo", b1);
+        RoomManager.Joined jb2 = joinRoom(rm, Protocol.join(jb.room().code), "Bravo2", b2);
+        check(!jb.room().code.equals(codeA) && rm.all().size() == 2, "a second host gets a second room");
+        Player pa1 = ja.player(), pa2 = ja2.player(), pb1 = jb.player(), pb2 = jb2.player();
+        check(new java.util.HashSet<>(List.of(pa1.id, pa2.id, pb1.id, pb2.id)).size() == 4, "player ids are unique across rooms");
+
+        ja.room().game.chat(pa1.id, "hello");
+        check(a2.got("CHAT") && !b1.got("CHAT"), "chat stays inside its room");
+        check(b1.lines.stream().noneMatch(l -> l.contains("Alpha")), "a room's lobby list never shows another room's players");
+
+        InetSocketAddress addrA = new InetSocketAddress("127.0.0.1", 10001), addrB = new InetSocketAddress("127.0.0.1", 10002);
+        rm.handleInput(new Protocol.Input(pa1.id, pa1.token, 1, 1, 0, 0, false), addrA);
+        rm.handleInput(new Protocol.Input(pb1.id, pb1.token, 1, 0, 1, 0, false), addrB);
+        check(pa1.dx == 1 && pb1.dy == 1 && pb1.dx == 0, "UDP input reaches the sender's own room");
+        rm.handleInput(new Protocol.Input(pa1.id, pb1.token, 2, -1, 0, 0, false), addrA);
+        check(pa1.dx == 1, "a token from another room is rejected");
+
+        java.util.Map<InetSocketAddress, String> sent = new java.util.HashMap<>();
+        rm.tickAll((line, addr) -> sent.put(addr, line));
+        Snapshot sa = Protocol.decodeSnapshot(sent.get(addrA)), sb = Protocol.decodeSnapshot(sent.get(addrB));
+        check(sa != null && sb != null && sa.players.length == 2 && sb.players.length == 2
+                && java.util.Arrays.stream(sa.players).allMatch(p -> p.id == pa1.id || p.id == pa2.id)
+                && java.util.Arrays.stream(sb.players).allMatch(p -> p.id == pb1.id || p.id == pb2.id),
+                "each room's snapshot goes only to its own players and shows only them");
+
+        rm.leave(pa1.id);
+        check(rm.find(codeA) != null && ja.room().game.playerCount() == 1, "a room stays open while someone is in it");
+        rm.leave(pa2.id);
+        check(rm.find(codeA) == null && rm.all().size() == 1, "the last player leaving closes the room");
+        rm.handleInput(new Protocol.Input(pa1.id, pa1.token, 3, 0, 0, 0, false), addrA);   // must not throw for a gone player
+    }
+
+    void roomJoinRules() {
+        RoomManager rm = new RoomManager(2, 5000, new Random(2));
+        RoomManager.Joined none = joinRoom(rm, Protocol.join("ZZZZ"), "Lost", new FakeConn());
+        check(none.player() == null && "room not found".equals(none.error()), "a wrong code is refused: room not found");
+        RoomManager.Joined priv = joinRoom(rm, Protocol.create(1, false), "Host", new FakeConn());
+        joinRoom(rm, Protocol.join(priv.room().code), "Friend", new FakeConn());
+        RoomManager.Joined third = joinRoom(rm, Protocol.join(priv.room().code), "Third", new FakeConn());
+        check("room full".equals(third.error()), "a full room is refused: room full");
+
+        RoomManager.Joined q1 = joinRoom(rm, Protocol.QUICK, "Q1", new FakeConn());
+        check(q1.room() != priv.room() && q1.room().isPublic, "quick play never picks a private room");
+        RoomManager.Joined q2 = joinRoom(rm, null, "Q2", new FakeConn());
+        check(q2.room() == q1.room(), "quick play (also a HELLO without a room) fills an open public room first");
+        RoomManager.Joined q3 = joinRoom(rm, Protocol.QUICK, "Q3", new FakeConn());
+        check(q3.room() != q1.room(), "when every public room is full, quick play opens a new one");
+        RoomManager.Joined big = joinRoom(rm, Protocol.create(3, true), "Big", new FakeConn());
+        check(big.room().game.mode() == 3 && big.room().isPublic, "a host picks the size and public when creating");
+
+        List<Protocol.RoomInfo> list = rm.listPublic();
+        check(list.size() == 3 && list.stream().noneMatch(r -> r.code().equals(priv.room().code)),
+                "the ROOMS list shows public rooms only");
+        check(Protocol.decodeRooms(Protocol.encodeRooms(list)).equals(list), "the ROOMS list survives encode/decode");
+        check(Protocol.decodeRooms("ROOMS").isEmpty() && Protocol.decodeRooms("ROOMS bad,AB:x:1:LOBBY").isEmpty(),
+                "an empty or broken ROOMS line decodes to nothing");
+        check("unknown room request NOPE".equals(joinRoom(rm, "NOPE", "X", new FakeConn()).error()), "an unknown room request is refused");
+
+        RoomManager many = new RoomManager(2, 5000, new Random(3));
+        for (int i = 0; i < RoomManager.MAX_ROOMS; i++) joinRoom(many, Protocol.create(1, false), "H" + i, new FakeConn());
+        check(many.all().size() == RoomManager.MAX_ROOMS
+                && "server busy, too many rooms".equals(joinRoom(many, Protocol.create(1, false), "Late", new FakeConn()).error()),
+                "the server caps the number of rooms (" + RoomManager.MAX_ROOMS + ")");
+    }
+
+    /** Over real sockets: create a private room, join it by code, list rooms, and a wrong code. */
+    void roomsOverSockets() {
+        int port = 49000 + new Random().nextInt(2000);
+        String v = Protocol.VERSION;
+        try {
+            GameServer.start(port, 2);
+            try (Client host = new Client(port); Client friend = new Client(port); Client browser = new Client(port); Client lost = new Client(port)) {
+                host.send("HELLO 0 Host 0 0 1 0 " + v + " " + Protocol.create(2, false));
+                String room = host.read(), welcome = host.read();
+                check(room != null && room.matches("ROOM [A-Z2-9]{4} private") && welcome.startsWith("WELCOME"),
+                        "CREATE gives the host a private room code (" + room + ")");
+                String code = room.split(" ")[1];
+                friend.send("HELLO -1 Friend 0 0 1 0 " + v + " " + Protocol.join(code));
+                String fr = friend.read();
+                check(("ROOM " + code + " private").equals(fr) && friend.read().startsWith("WELCOME"), "a friend joins with the code");
+                browser.send("ROOMS");
+                check("ROOMS".equals(browser.read()), "ROOMS works before HELLO and hides private rooms");
+                lost.send("HELLO -1 Lost 0 0 1 0 " + v + " " + Protocol.join("QQQQ"));
+                check("ERROR room not found".equals(lost.read()), "a wrong code gets a clear error");
+            }
+        } catch (java.io.IOException e) {
+            check(false, "room socket test failed on port " + port + ": " + e);
         }
     }
 
@@ -593,6 +717,9 @@ public class ServerLogicTest {
         t.run("server full", t::serverFullIsRefused);
         t.run("protocol", t::protocolRoundTrips);
         t.run("version check", t::versionCheck);
+        t.run("rooms are separate matches", t::roomsAreSeparateMatches);
+        t.run("room join rules", t::roomJoinRules);
+        t.run("rooms over sockets", t::roomsOverSockets);
         System.out.println("\nPassed: " + passed + " | Failed: " + failed);
         if (failed > 0) System.exit(1);
     }

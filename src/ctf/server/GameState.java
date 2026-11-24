@@ -12,9 +12,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.function.IntSupplier;
 
 /**
- * The single source of truth for the game (authoritative server). The rules mirror the client's
+ * The single source of truth for one match (one room; see RoomManager) (authoritative server). The rules mirror the client's
  * Demo.java and use the shared MapData, so the client's movement prediction matches the server.
  *
  * Phases: LOBBY (walk around the waiting room, pick a team pad, ready up; the host starts a 5 s countdown)
@@ -59,17 +60,28 @@ public class GameState {
     private int mode;             // players per team: 1 = 1v1 ... 4 = 4v4. The host picks it; joins past it are refused
     private int winner = -1;
     private long tick;
-    private int nextId = 1;
+    private final IntSupplier ids;   // player ids; a RoomManager shares one source so ids are unique across rooms (UDP routing)
 
     public GameState(int minPlayers, int udpPort) {
         this(minPlayers, udpPort, new Random());
     }
 
     public GameState(int minPlayers, int udpPort, Random rng) {
+        this(minPlayers, (minPlayers + 1) / 2, udpPort, rng, counter());   // a server started for 4 players opens as 2v2
+    }
+
+    /** One room: mode is its starting size (1 = 1v1 ... 4 = 4v4), ids hands out player ids. */
+    public GameState(int minPlayers, int mode, int udpPort, Random rng, IntSupplier ids) {
         this.minPlayers = minPlayers;
-        this.mode = Math.max(1, Math.min((minPlayers + 1) / 2, MAX_TEAM));   // a server started for 4 players opens as 2v2
+        this.mode = Math.max(1, Math.min(mode, MAX_TEAM));
         this.udpPort = udpPort;
         this.rng = rng;
+        this.ids = ids;
+    }
+
+    private static IntSupplier counter() {
+        int[] next = {1};
+        return () -> next[0]++;   // only called inside synchronized addPlayer
     }
 
     // ------------------------------------------------------------------ lobby (TCP threads)
@@ -81,7 +93,7 @@ public class GameState {
         if (players.size() >= 2 * mode) return null;   // both teams full at this match size (1v1 holds 2): refuse, lobby or mid-match
         if (team != 0 && team != 1) team = teamSize(0) <= teamSize(1) ? 0 : 1;   // auto-balance
         if (teamSize(team) >= mode) team = 1 - team;   // asked for a full team: the other one has room
-        Player p = new Player(nextId++, name, team, rng.nextInt(Integer.MAX_VALUE), conn);
+        Player p = new Player(ids.getAsInt(), name, team, rng.nextInt(Integer.MAX_VALUE), conn);
         p.hat = Math.floorMod(hat, LobbyMap.HATS);
         p.hatColor = Math.floorMod(hatColor, LobbyMap.HAT_COLORS);
         p.level = Math.max(1, Math.min(level, 999));   // shown to others only; each player's own computer keeps the real profile
@@ -157,6 +169,11 @@ public class GameState {
         String msg = "CHAT " + p.id + " " + p.name + ": " + text.substring(0, Math.min(text.length(), 200));
         for (Player q : players.values()) q.conn.send(msg);
     }
+
+    public synchronized int playerCount() { return players.size(); }
+
+    /** True while a join would be accepted: both teams are not yet full at the current match size. */
+    public synchronized boolean hasRoom() { return players.size() < 2 * mode; }
 
     /** The first player still connected is the host; when they leave, the next one takes over. */
     private int hostId() {

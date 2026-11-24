@@ -1,7 +1,6 @@
 package ctf.server;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.Executors;
@@ -11,8 +10,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * Entry point. Starts three kinds of threads:
  *   1. accept thread - TCP accept loop, one new ClientHandler thread per client
- *   2. udp-receiver  - receives input packets
- *   3. tick-loop     - runs the game 30 times per second and sends snapshots
+ *   2. udp-receiver  - receives input packets and hands each to its player's room
+ *   3. tick-loop     - runs every room 30 times per second and sends each room its snapshots
+ * One server holds many rooms (RoomManager); each room is its own match.
  *
  * Usage: java ctf.server.GameServer [port] [minPlayers]   (defaults 5000 and 2)
  * TCP and UDP both use the same port number. The game's HOST button calls start() inside the client instead.
@@ -29,11 +29,11 @@ public class GameServer {
      * then serves on background threads. Returns the accept thread.
      */
     public static Thread start(int port, int minPlayers) throws IOException {
-        GameState game = new GameState(minPlayers, port);
+        RoomManager rooms = new RoomManager(minPlayers, port);
         ServerSocket server = new ServerSocket(port);
         UdpServer udp;
         try {
-            udp = new UdpServer(port, game);
+            udp = new UdpServer(port, rooms);
         } catch (IOException e) {
             server.close();
             throw e;
@@ -49,16 +49,15 @@ public class GameServer {
         });
         ticker.scheduleAtFixedRate(() -> {
             try {
-                game.tick();
-                String snapshot = game.snapshotLine();
-                for (InetSocketAddress addr : game.udpTargets()) udp.send(snapshot, addr);
+                rooms.tickAll(udp::send);
             } catch (Exception e) {
                 e.printStackTrace();   // never let one bad tick stop the loop
             }
         }, 0, 1_000_000 / GameState.TICK_RATE, TimeUnit.MICROSECONDS);
 
         System.out.println("CTF server on TCP+UDP port " + port + ", " + GameState.TICK_RATE
-                + " ticks/s, starts with " + minPlayers + " ready players");
+                + " ticks/s, starts with " + minPlayers + " ready players, many rooms, "
+                + (Threads.virtual() ? "virtual" : "small-stack") + " client threads");
         Thread accept = new Thread(() -> {
             try (server) {
                 while (true) {
@@ -67,7 +66,7 @@ public class GameServer {
                     // On the internet a player can vanish without the connection closing (signal lost, laptop shut).
                     // Clients PING every 2 s, so 15 s of silence means they are gone: the read times out and they are removed.
                     s.setSoTimeout(15_000);
-                    new Thread(new ClientHandler(s, game), "client-" + s.getPort()).start();
+                    Threads.start("client-" + s.getPort(), new ClientHandler(s, rooms));
                 }
             } catch (IOException e) {
                 System.err.println("Server stopped: " + e.getMessage());

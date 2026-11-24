@@ -25,7 +25,39 @@ public final class Protocol {
     private Protocol() {}
 
     /** Sent with HELLO; the server refuses other versions with a clear message, because the wire format changes between them. */
-    public static final String VERSION = "1.2";
+    public static final String VERSION = "1.3";   // 1.3: rooms (HELLO's 8th field, ROOM, ROOMS)
+
+    /**
+     * Which room a HELLO joins: its optional 8th field. Missing means QUICK, so a client that knows nothing about
+     * rooms still gets a game. The server answers with "ROOM code public|private" before WELCOME.
+     */
+    public static final String QUICK = "QUICK";
+    public static String create(int mode, boolean isPublic) { return "CREATE:" + mode + ":" + (isPublic ? "public" : "private"); }
+    public static String join(String code) { return "JOIN:" + code; }
+
+    /** One public room in the ROOMS list. phase is GameState.Phase's name. */
+    public record RoomInfo(String code, int mode, int players, String phase) {}
+
+    /** ROOMS code:mode:players:phase,...   (answer to a ROOMS request, which may be sent before HELLO) */
+    public static String encodeRooms(List<RoomInfo> rooms) {
+        StringJoiner sj = new StringJoiner(",");
+        for (RoomInfo r : rooms) sj.add(r.code() + ":" + r.mode() + ":" + r.players() + ":" + r.phase());
+        return ("ROOMS " + sj).trim();
+    }
+
+    public static List<RoomInfo> decodeRooms(String line) {
+        List<RoomInfo> out = new ArrayList<>();
+        String[] t = line.trim().split(" ", 2);
+        if (!t[0].equals("ROOMS") || t.length < 2) return out;
+        for (String e : t[1].split(",")) {
+            String[] p = e.split(":");
+            if (p.length != 4) continue;
+            try {
+                out.add(new RoomInfo(p[0], Integer.parseInt(p[1]), Integer.parseInt(p[2]), p[3]));
+            } catch (NumberFormatException ignored) { /* skip a malformed entry */ }
+        }
+        return out;
+    }
 
     public record Input(int id, int token, int seq, int dx, int dy, double aim, boolean shoot) {}
 

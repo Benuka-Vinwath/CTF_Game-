@@ -46,6 +46,7 @@ public class GameplayTest {
         runTest("Lobby Room Draws, Ready Button Clicks, ENTER Chat Sends", GameplayTest::testLobbyRoom);
         runTest("Menu: Clicking HOST And JOIN Buttons Reaches The Game", GameplayTest::testMenuButtons);
         runTest("Menu: QUIT Asks First", GameplayTest::testQuitAsksFirst);
+        runTest("Menu: Online Rooms (Quick, Create, Join Code, List)", GameplayTest::testOnlineRooms);
         runTest("Esc Menu: Leave Lobby At Once, Quit Mid-Match Asks First", GameplayTest::testEscMenu);
         runTest("Profile Database: Matches, XP, Levels, Achievements, Locks, Reset", GameplayTest::testProfile);
         runTest("online-server.txt: Address Read, Comments Skipped, Missing = No Button", GameplayTest::testOnlineServerFile);
@@ -564,6 +565,61 @@ public class GameplayTest {
         try { node.removeNode(); } catch (Exception ignored) { /* test settings only */ }
         assertTrue(did.contains("host"), "clicking HOST hosts (" + did + ")");
         assertTrue(did.contains("join localhost"), "clicking JOIN joins the typed address (" + did + ")");
+    }
+
+    /** ONLINE opens the rooms page: quick play, create (size, public/private), join by typed code, and join from the list. */
+    static void testOnlineRooms() {
+        java.util.List<String> did = new java.util.ArrayList<>();
+        java.util.prefs.Preferences node = java.util.prefs.Preferences.userRoot().node("ctf-rooms-test-" + System.nanoTime());
+        java.nio.file.Path dir;
+        try { dir = java.nio.file.Files.createTempDirectory("throne-rooms"); } catch (java.io.IOException e) { throw new RuntimeException(e); }
+        MenuScreen menu = new MenuScreen(new MenuScreen.Actions() {
+            public void host() {}
+            public void join(String address) {}
+            public void online(String address, String room) { did.add(address + " " + room); }
+            public void listRooms(String address) { did.add("list " + address); }
+            public void quit() {}
+            public void toggleFullscreen() {}
+            public boolean fullscreen() { return false; }
+        }, new Profile(dir.resolve("profile.db"), node));
+        menu.setSize(1600, 900);
+        menu.setOnlineServer("rooms.example:5000");
+        BufferedImage img = new BufferedImage(1600, 900, BufferedImage.TYPE_INT_RGB);
+        Runnable paint = () -> { Graphics2D g = img.createGraphics(); menu.paint(g); g.dispose(); };
+        java.util.function.BiConsumer<Integer, Integer> click = (x, y) -> {
+            for (java.awt.event.MouseListener l : menu.getMouseListeners())
+                l.mousePressed(new java.awt.event.MouseEvent(menu, java.awt.event.MouseEvent.MOUSE_PRESSED, 0, 0, x, y, 1, false, java.awt.event.MouseEvent.BUTTON1));
+        };
+        java.util.function.Consumer<Character> type = ch -> {
+            for (java.awt.event.KeyListener l : menu.getKeyListeners())
+                l.keyPressed(new java.awt.event.KeyEvent(menu, java.awt.event.KeyEvent.KEY_PRESSED, 0, 0, java.awt.event.KeyEvent.VK_UNDEFINED, ch));
+        };
+        onEdt(() -> {
+            paint.run();
+            click.accept(200, 335);   // PLAY
+            paint.run();
+            click.accept(875, 722);   // ONLINE on the join card
+            paint.run();
+            menu.setRooms(java.util.List.of(new ctf.common.Protocol.RoomInfo("K7QX", 2, 3, "LOBBY"),
+                new ctf.common.Protocol.RoomInfo("M3PZ", 1, 2, "PLAYING")), null);
+            paint.run();
+            click.accept(560, 270);   // PLAY NOW
+            click.accept(315, 475);   // size: 1v1 -> 2v2
+            click.accept(635, 475);   // private -> public
+            paint.run();
+            click.accept(560, 543);   // CREATE
+            for (char ch : "k7q0x".toCharArray()) type.accept(ch);   // lower case and an O-like zero: the code becomes K7QX
+            paint.run();
+            click.accept(440, 717);   // JOIN with the code
+            click.accept(1415, 347);  // JOIN on the first listed room
+        });
+        try { node.removeNode(); } catch (Exception ignored) { /* test settings only */ }
+        String s = "rooms.example:5000 ";
+        assertTrue(did.contains("list rooms.example:5000"), "opening the page asks for the room list (" + did + ")");
+        assertTrue(did.contains(s + "QUICK"), "PLAY NOW is quick play (" + did + ")");
+        assertTrue(did.contains(s + "CREATE:2:public"), "CREATE sends the chosen size and visibility (" + did + ")");
+        assertTrue(did.stream().filter(d -> d.equals(s + "JOIN:K7QX")).count() == 2,
+            "a typed code (cleaned up) and a listed room both join by code (" + did + ")");
     }
 
     /** Choosing QUIT opens the "leave the throne room?" message; only its QUIT button (or ENTER after a moment) really quits. */

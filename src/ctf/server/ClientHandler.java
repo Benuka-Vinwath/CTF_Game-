@@ -13,13 +13,15 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 /**
- * One per connected client, on its own thread (thread-per-client).
+ * One per connected client, on its own thread (thread-per-client; see Threads for why that stays cheap).
  *
- * The reader thread (this Runnable) reads TCP lines and calls GameState. A second, writer thread
+ * The reader thread (this Runnable) reads TCP lines and calls the player's room (a GameState). A second, writer thread
  * takes lines from an outbox queue and writes them to the socket, so game logic never waits on a
  * slow client's network. A client that stops reading entirely (queue over MAX_QUEUE) is dropped.
  *
- * Commands (client to server): HELLO team name hat colour level title version, MODE n (host: n players per team), READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text,
+ * Commands (client to server): ROOMS (allowed before HELLO: the public room list),
+ * HELLO team name hat colour level title version [QUICK | CREATE:mode:public|private | JOIN:code],
+ * MODE n (host: n players per team), READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text,
  * BEGIN (host starts the countdown), LOOK hat colour, AGAIN (back to the lobby after a match), BYE
  */
 public class ClientHandler implements Runnable, Conn {
@@ -27,29 +29,40 @@ public class ClientHandler implements Runnable, Conn {
     private static final int MAX_QUEUE = 1000;
 
     private final Socket socket;
-    private final GameState game;
+    private final RoomManager rooms;
+    private volatile GameState game;   // the player's room; null until HELLO
     private final BlockingQueue<String> outbox = new LinkedBlockingQueue<>();
     private volatile boolean open = true;
-    private Player player;   // null until HELLO
+    private boolean closed;   // guarded by close()'s lock
+    private volatile Player player;   // null until HELLO; read by close() on the writer thread too
 
-    public ClientHandler(Socket socket, GameState game) {
+    public ClientHandler(Socket socket, RoomManager rooms) {
         this.socket = socket;
-        this.game = game;
+        this.rooms = rooms;
     }
 
-    /** Thread-safe and non-blocking: callable from any thread, including inside the game lock. */
+    /** Thread-safe and non-blocking: callable from any thread, including inside a room's lock. */
     @Override
     public void send(String line) {
         if (!open) return;
-        if (outbox.size() > MAX_QUEUE) { close(); return; }
+        if (outbox.size() > MAX_QUEUE) { drop(); return; }
         outbox.offer(line);
+    }
+
+    /**
+     * Too far behind: stop queueing and cut the socket. The caller may hold a room's lock (a broadcast), so the player
+     * is not removed here; the reader thread sees the socket close and leaves the room from its own thread.
+     */
+    private void drop() {
+        open = false;
+        outbox.clear();
+        outbox.offer(CLOSE);
+        try { socket.close(); } catch (IOException ignored) { }
     }
 
     @Override
     public void run() {
-        Thread writer = new Thread(this::writeLoop, Thread.currentThread().getName() + "-writer");
-        writer.setDaemon(true);
-        writer.start();
+        Threads.start(Thread.currentThread().getName() + "-writer", this::writeLoop);
         // Not try-with-resources: closing the reader would close the socket before the writer has sent the last line
         // (e.g. "ERROR ... get the latest version"). The writer closes the socket once its queue is flushed.
         try {
@@ -72,6 +85,8 @@ public class ClientHandler implements Runnable, Conn {
         String cmd = parts[0].toUpperCase();
         String arg = parts.length > 1 ? parts[1].trim() : "";
 
+        if (cmd.equals("ROOMS")) { send(Protocol.encodeRooms(rooms.listPublic())); return true; }
+
         if (player == null) {
             if (!cmd.equals("HELLO")) { send("ERROR send HELLO <team> <name> first"); return true; }
             String[] a = arg.split(" ");   // HELLO team name hat colour level title version; cleanName keeps the name free of spaces
@@ -82,10 +97,13 @@ public class ClientHandler implements Runnable, Conn {
             }
             int team = parseInt(a[0], -1);
             String name = Protocol.cleanName(a.length > 1 ? a[1] : "");
-            player = game.addPlayer(name, team, a.length > 2 ? parseInt(a[2], 0) : 0, a.length > 3 ? parseInt(a[3], 0) : 0,
+            RoomManager.Joined j = rooms.join(a.length > 7 ? a[7] : Protocol.QUICK, name, team,
+                    a.length > 2 ? parseInt(a[2], 0) : 0, a.length > 3 ? parseInt(a[3], 0) : 0,
                     a.length > 4 ? parseInt(a[4], 1) : 1, a.length > 5 ? parseInt(a[5], 0) : 0, this);
-            if (player == null) { send("ERROR server full"); return false; }
-            System.out.println("[tcp] " + name + " connected from " + socket.getRemoteSocketAddress());
+            if (j.error() != null) { send("ERROR " + j.error()); return false; }
+            game = j.room().game;
+            player = j.player();
+            System.out.println("[tcp] " + name + " connected from " + socket.getRemoteSocketAddress() + " to room " + j.room().code);
             return true;
         }
 
@@ -127,13 +145,15 @@ public class ClientHandler implements Runnable, Conn {
         }
     }
 
+    /** Only ever called on this client's own reader or writer thread, never inside a room's lock. */
     private synchronized void close() {
-        if (!open) return;
+        if (closed) return;
+        closed = true;
         open = false;
         outbox.offer(CLOSE);                          // writer flushes, then closes the socket
         if (player != null) {
             System.out.println("[tcp] " + player.name + " disconnected");
-            game.removePlayer(player.id);
+            rooms.leave(player.id);
         }
     }
 
