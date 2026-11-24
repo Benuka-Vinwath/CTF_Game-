@@ -180,7 +180,7 @@ final class Music {
 
         for (int c = 0; c < 12; c++) {
             final double t0 = c * 8 * BEAT, len = 8 * BEAT;
-            final boolean intro = c < 2, themeB = c >= 6 && c < 10, turn = c >= 10;
+            final boolean intro = c < 2, themeB = c >= 6 && c < 10;
             double padAmp = themeB ? 1.0 : intro ? 0.75 : 0.65;
             for (int note : chords[c]) {
                 final double f = hz(note);

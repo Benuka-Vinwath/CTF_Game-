@@ -21,4 +21,7 @@ public interface NetLink {
     default void sendMode(int perTeam) {}
     /** The latest LOBBY list from the server (names, teams, ready, host, hats), or null. */
     default Protocol.Lobby lobby() { return null; }
+    /** The room's code (K7QX) that friends type to join, or null (offline demo). */
+    default String roomCode() { return null; }
+    default boolean roomPublic() { return true; }
 }

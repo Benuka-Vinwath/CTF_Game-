@@ -28,6 +28,7 @@ import java.awt.image.BufferedImage;
  * F11 toggles full screen; Esc goes to the game, which opens its in-game menu (GamePanel).
  */
 public class GameView extends JComponent {
+    private static final long serialVersionUID = 1L;
     private final GamePanel game;
     private static final double MAX_RENDER_SCALE = 2.0;   // draw at most 2 pixels per world pixel, then enlarge (keeps 4K fast)
     private static final double MAX_WORLD_PIXELS = 1920 * 1080;   // and at most a 1080p picture of the world

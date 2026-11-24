@@ -21,17 +21,20 @@ import java.util.prefs.Preferences;
  * Choices (name, hat, last address, settings) are remembered between runs with java.util.prefs.
  */
 final class MenuScreen extends JComponent {
+    private static final long serialVersionUID = 1L;
     /** What the menu asks the game window to do. */
     interface Actions {
         void host();
         void join(String address);
+        default void online(String address, String room) {}   // room: Protocol.QUICK / create(...) / join(code)
+        default void listRooms(String address) {}              // answers through setRooms
         void quit();
         void toggleFullscreen();
         boolean fullscreen();
     }
 
     static final int VW = 1600, VH = 900;
-    private enum Page { MAIN, PLAY, PROFILE, HOWTO, SETTINGS, CREDITS }
+    private enum Page { MAIN, PLAY, ONLINE, PROFILE, HOWTO, SETTINGS, CREDITS }
     private static final String[] ITEMS = {"PLAY", "PROFILE", "HOW TO PLAY", "SETTINGS", "CREDITS", "QUIT"};
     private static final String[] NUMERALS = {"I", "II", "III", "IV", "V", "VI"};
     private static final String[] COLOR_NAMES = {"GOLD", "SILVER", "ROSE", "JADE", "VIOLET", "CYAN"};
@@ -58,7 +61,15 @@ final class MenuScreen extends JComponent {
     private String status = "";
     private boolean statusError, busy;
     private String lanAddress = "...";
-    private final String onlineServer = readOnlineServer(java.nio.file.Path.of("online-server.txt"));
+    private String onlineServer = readOnlineServer(java.nio.file.Path.of("online-server.txt"));
+    // Online Rooms page
+    private final StringBuilder code = new StringBuilder();   // the room code being typed
+    private int roomSize = 1;                                   // CREATE: players per team
+    private boolean roomPublic;                                 // CREATE: listed for everyone, or code only
+    private List<ctf.common.Protocol.RoomInfo> rooms;           // the last ROOMS answer, or null
+    private String roomsNote = "";                              // "Looking for rooms..." or why it failed
+    private double roomsAsked = -99;                            // menu time of the last ROOMS request
+    private boolean roomsLoading;
     private int dragSlider = -1;
 
     private final Timer timer = new Timer(16, e -> repaint());
@@ -124,6 +135,7 @@ final class MenuScreen extends JComponent {
     int lagLoss() { return lagLoss; }
 
     void setAddress(String a) { address.setLength(0); address.append(a); }
+    void setOnlineServer(String a) { onlineServer = a; }   // tests; the game reads online-server.txt
 
     void start() {
         fx = prefs.getBoolean("fx", fx);   // the in-game menu may have changed these
@@ -139,7 +151,14 @@ final class MenuScreen extends JComponent {
         status = text;
         statusError = error;
         this.busy = busy;
-        if (!text.isEmpty()) page = Page.PLAY;   // messages belong under the Play tiles (also after a disconnect)
+        if (!text.isEmpty() && page != Page.ONLINE) page = Page.PLAY;   // messages belong under the Play tiles (also after a disconnect)
+    }
+
+    /** The answer to Actions.listRooms: the public rooms, or null and why it failed. */
+    void setRooms(List<ctf.common.Protocol.RoomInfo> list, String error) {
+        roomsLoading = false;
+        if (list != null) { rooms = list; roomsNote = ""; }
+        else roomsNote = error == null ? "" : error;
     }
 
     // ------------------------------------------------------------------ input
@@ -156,8 +175,8 @@ final class MenuScreen extends JComponent {
             setCursor(Cursor.getPredefinedCursor(over ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
             return;
         }
-        if (page != Page.MAIN && page != Page.PLAY) return;
-        for (Object[] h : hits) if (((Shape) h[0]).contains(mouse) && h.length > 2) {
+        if (page != Page.MAIN && page != Page.PLAY && page != Page.ONLINE) return;
+        if (page != Page.ONLINE) for (Object[] h : hits) if (((Shape) h[0]).contains(mouse) && h.length > 2) {
             if (page == Page.MAIN) sel = (Integer) h[2]; else tile = (Integer) h[2];
         }
         boolean over = false;
@@ -188,7 +207,13 @@ final class MenuScreen extends JComponent {
             else if ((k == KeyEvent.VK_ENTER || k == KeyEvent.VK_Y) && time - quitAsked > 0.35) actions.quit();   // a double tap on ENTER cannot quit by accident
             return;
         }
-        if (k == KeyEvent.VK_M && page != Page.PLAY && page != Page.PROFILE) { Music.toggle(); return; }   // M is a letter on the pages that type
+        if (k == KeyEvent.VK_M && page != Page.PLAY && page != Page.PROFILE && page != Page.ONLINE) { Music.toggle(); return; }   // M is a letter on the pages that type
+        if (page == Page.ONLINE && (k == KeyEvent.VK_BACK_SPACE || (e.getKeyChar() >= ' ' && e.getKeyChar() < 127 && !e.isControlDown()))) {
+            char ch = Character.toUpperCase(e.getKeyChar());   // the room code: only the letters a code can contain
+            if (k == KeyEvent.VK_BACK_SPACE) { if (code.length() > 0) code.setLength(code.length() - 1); }
+            else if (code.length() < 4 && ROOM_CHARS.indexOf(ch) >= 0) code.append(ch);
+            return;
+        }
         boolean typing = page == Page.PLAY || page == Page.PROFILE;   // the Profile page types into the name only
         if (typing && (k == KeyEvent.VK_BACK_SPACE || (e.getKeyChar() >= ' ' && e.getKeyChar() < 127 && !e.isControlDown()))) {
             if (page == Page.PROFILE) editName = true;
@@ -212,6 +237,10 @@ final class MenuScreen extends JComponent {
                 if (k == KeyEvent.VK_ENTER) go(tile);
                 if (k == KeyEvent.VK_ESCAPE) back();
             }
+            case ONLINE -> {
+                if (k == KeyEvent.VK_ENTER) joinCode();
+                if (k == KeyEvent.VK_ESCAPE) back();
+            }
             default -> { if (k == KeyEvent.VK_ESCAPE || k == KeyEvent.VK_BACK_SPACE) back(); }
         }
     }
@@ -227,7 +256,44 @@ final class MenuScreen extends JComponent {
         }
     }
 
-    private void back() { if (!busy) page = Page.MAIN; }
+    private void back() {
+        if (busy) return;
+        page = page == Page.ONLINE ? Page.PLAY : Page.MAIN;
+        if (page == Page.PLAY) { status = ""; statusError = false; }
+    }
+
+    // ------------------------------------------------------------------ Online Rooms page actions
+
+    static final String ROOM_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";   // the server's code alphabet (no O/0, I/1)
+
+    private void openOnline() {
+        if (onlineServer == null) return;
+        page = Page.ONLINE;
+        status = "";
+        statusError = false;
+        refreshRooms();
+    }
+
+    private void refreshRooms() {
+        if (roomsLoading || onlineServer == null) return;
+        roomsLoading = true;
+        roomsAsked = time;
+        if (rooms == null) roomsNote = "Looking for rooms...";
+        actions.listRooms(onlineServer);
+    }
+
+    /** Every way into a room checks the name first, like the Play page does. */
+    private void enterRoom(String room) {
+        if (busy || onlineServer == null) return;
+        if (playerName().isBlank()) { setStatus("Type a name first (on the Play page).", true, false); return; }
+        save();
+        actions.online(onlineServer, room);
+    }
+
+    private void joinCode() {
+        if (code.length() != 4) { setStatus("A room code has 4 letters or numbers.", true, false); return; }
+        enterRoom(ctf.common.Protocol.join(code.toString()));
+    }
 
     private void go(int which) {
         if (busy) return;
@@ -284,6 +350,7 @@ final class MenuScreen extends JComponent {
         switch (page) {
             case MAIN -> drawMain(g);
             case PLAY -> drawPlay(g);
+            case ONLINE -> drawOnline(g);
             case PROFILE -> drawProfilePage(g);
             case HOWTO -> drawHowTo(g);
             case SETTINGS -> drawSettings(g);
@@ -593,7 +660,7 @@ final class MenuScreen extends JComponent {
     }
 
     /** Pages that sit on the dimmed throne room. */
-    private static boolean dimRoom(Page p) { return p == Page.PLAY || p == Page.HOWTO || p == Page.SETTINGS; }
+    private static boolean dimRoom(Page p) { return p == Page.PLAY || p == Page.ONLINE || p == Page.HOWTO || p == Page.SETTINGS; }
 
     private void drawScene(Graphics2D g, double vx, double vy, double vw, double vh, Page pg) {
         boolean withThrone = pg == Page.MAIN || dimRoom(pg);   // the lit throne room (dimmed on the other pages)
@@ -1152,6 +1219,99 @@ final class MenuScreen extends JComponent {
         drawFooter(g, false);
     }
 
+    private static final Color CARD_TOP = new Color(28, 20, 52), CARD_BOTTOM = new Color(10, 7, 22), BODY = new Color(213, 207, 230);
+
+    /**
+     * Online Rooms: Quick Play, Create a Room (size, public or private), Join with Code, and the server's public rooms.
+     * The list refreshes itself every few seconds while the page is open.
+     */
+    private void drawOnline(Graphics2D g) {
+        playHeader(g, "PLAY   /   ONLINE", "ONLINE ROOMS");
+        if (!roomsLoading && time - roomsAsked > 5) refreshRooms();
+        double x = 80, w = 620;
+
+        // quick play
+        playCard(g, x, 196, w, 150, CARD_TOP, CARD_BOTTOM, false, GOLD);
+        cardInset(g, x, 196, w, 150);
+        shineTextLeft(g, "QUICK PLAY", Type.royal(32, true, 0.14f), x + 40, 196 + 62, GOLD_RAMP);
+        g.setFont(Type.hud(19, true, 0.01f));
+        wrap(g, "Jump into any open public room.", x + 40, 196 + 100, 330, 26, BODY);
+        button(g, x + w - 240, 196 + 48, 200, 54, busy ? "..." : "PLAY NOW", false, () -> enterRoom(ctf.common.Protocol.QUICK));
+
+        // create a room
+        double cy = 362;
+        playCard(g, x, cy, w, 228, CARD_TOP, CARD_BOTTOM, false, GOLD);
+        cardInset(g, x, cy, w, 228);
+        shineTextLeft(g, "CREATE A ROOM", Type.royal(32, true, 0.14f), x + 40, cy + 62, GOLD_RAMP);
+        playPicker(g, x + 40, cy + 88, 220, roomSize + " V " + roomSize, null,
+            () -> roomSize = roomSize == 1 ? 4 : roomSize - 1, () -> roomSize = roomSize == 4 ? 1 : roomSize + 1);
+        playPicker(g, x + 280, cy + 88, 300, roomPublic ? "PUBLIC" : "PRIVATE", roomPublic ? new Color(110, 230, 130) : GOLD,
+            () -> roomPublic = !roomPublic, () -> roomPublic = !roomPublic);
+        g.setFont(Type.hud(17, true, 0.01f));
+        wrap(g, roomPublic ? "Listed here for everyone to join." : "Only friends with the code can join.", x + 40, cy + 182, 330, 24, BODY);
+        button(g, x + w - 240, cy + 154, 200, 54, busy ? "..." : "CREATE", false, () -> enterRoom(ctf.common.Protocol.create(roomSize, roomPublic)));
+
+        // join with a code
+        double jy = 606;
+        playCard(g, x, jy, w, 160, CARD_TOP, CARD_BOTTOM, false, GOLD);
+        cardInset(g, x, jy, w, 160);
+        shineTextLeft(g, "JOIN WITH CODE", Type.royal(32, true, 0.14f), x + 40, jy + 62, GOLD_RAMP);
+        playField(g, x + 40, jy + 84, 220, 54, code.toString(), true, true, () -> { });
+        button(g, x + 280, jy + 84, 160, 54, busy ? "..." : "JOIN", true, this::joinCode);
+
+        drawRoomList(g, 730, 196, 790, 570);
+        if (!status.isEmpty()) {
+            g.setFont(Type.hud(19, true, 0.04f));
+            Art.text(g, status, 80, 800, statusError ? new Color(255, 130, 110) : GOLD_HI);
+        }
+        drawFooter(g, false);
+    }
+
+    private void drawRoomList(Graphics2D g, double x, double y, double w, double h) {
+        playCard(g, x, y, w, h, CARD_TOP, CARD_BOTTOM, false, GOLD);
+        cardInset(g, x, y, w, h);
+        shineTextLeft(g, "PUBLIC ROOMS", Type.royal(32, true, 0.14f), x + 40, y + 62, GOLD_RAMP);
+        button(g, x + w - 210, y + 28, 170, 46, roomsLoading ? "..." : "REFRESH", true, this::refreshRooms);
+        double[] col = {x + 50, x + 230, x + 360, x + 500};
+        g.setFont(Type.hud(16, true, 0.18f));
+        String[] head = {"CODE", "SIZE", "PLAYERS", "STATUS"};
+        for (int i = 0; i < head.length; i++) Art.text(g, head[i], col[i], y + 112, MUTED);
+
+        List<ctf.common.Protocol.RoomInfo> list = rooms;
+        if (list == null || list.isEmpty()) {
+            g.setFont(Type.hud(20, true, 0.02f));
+            String msg = !roomsNote.isEmpty() ? roomsNote : "No public rooms yet. Create one!";
+            Art.textCenter(g, msg, x, w, y + 280, roomsNote.startsWith("Could") ? new Color(255, 130, 110) : SOFT);
+            return;
+        }
+        int shown = Math.min(list.size(), 8);
+        for (int i = 0; i < shown; i++) {
+            ctf.common.Protocol.RoomInfo r = list.get(i);
+            double ry = y + 128 + i * 52;
+            Rectangle2D row = new Rectangle2D.Double(x + 30, ry, w - 60, 46);
+            g.setColor(i % 2 == 0 ? new Color(255, 205, 90, 18) : new Color(255, 205, 90, 8));
+            g.fill(row);
+            boolean full = r.players() >= 2 * r.mode(), playing = !r.phase().equals("LOBBY");
+            g.setFont(Type.royal(24, true, 0.2f));
+            Art.text(g, r.code(), col[0], ry + 32, GOLD_HI);
+            g.setFont(Type.hud(20, true, 0.04f));
+            Art.text(g, r.mode() + " v " + r.mode(), col[1], ry + 31, Color.WHITE);
+            Art.text(g, r.players() + " / " + (2 * r.mode()), col[2], ry + 31, full ? MUTED : Color.WHITE);
+            Art.text(g, playing ? "PLAYING" : "IN LOBBY", col[3], ry + 31, playing ? GOLD : new Color(110, 230, 130));
+            if (full) {
+                g.setFont(Type.hud(17, true, 0.2f));
+                Art.text(g, "FULL", x + w - 140, ry + 30, MUTED);
+            } else {
+                String join = ctf.common.Protocol.join(r.code());
+                button(g, x + w - 170, ry + 5, 130, 36, "JOIN", false, () -> enterRoom(join));
+            }
+        }
+        if (list.size() > shown) {
+            g.setFont(Type.hud(16, true, 0.05f));
+            Art.text(g, "+ " + (list.size() - shown) + " more rooms", x + 50, y + h - 22, MUTED);
+        }
+    }
+
     private void playTile(Graphics2D g, int which, double x, double y, double w, double h) {
         boolean on = tile == which, host = which == 0;
         y += on ? -6 : 0;
@@ -1205,13 +1365,8 @@ final class MenuScreen extends JComponent {
                 rx += rw + 8;
             }
             button(g, bx + 40, by + 498, 156, 54, busy && tile == 1 ? "..." : "JOIN", true, () -> go(1));
-            if (onlineServer != null)   // the cloud server from online-server.txt: play with anyone, anywhere
-                button(g, bx + 208, by + 498, 190, 54, "ONLINE", false, () -> {
-                    address.setLength(0);
-                    address.append(onlineServer);
-                    editName = false;
-                    go(1);
-                });
+            if (onlineServer != null)   // the cloud server from online-server.txt: rooms with anyone, anywhere
+                button(g, bx + 208, by + 498, 190, 54, "ONLINE", false, this::openOnline);
         }
     }
 

@@ -15,11 +15,11 @@ import java.nio.charset.StandardCharsets;
  */
 public class UdpServer implements Runnable {
     private final DatagramSocket socket;
-    private final GameState game;
+    private final RoomManager rooms;
 
-    public UdpServer(int port, GameState game) throws SocketException {
+    public UdpServer(int port, RoomManager rooms) throws SocketException {
         this.socket = new DatagramSocket(port);
-        this.game = game;
+        this.rooms = rooms;
     }
 
     /** Receive loop. Expected packet: "I id token seq dx dy aim shoot" (see Protocol.decodeInput). */
@@ -36,7 +36,7 @@ public class UdpServer implements Runnable {
             }
             String msg = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
             Protocol.Input in = Protocol.decodeInput(msg);
-            if (in != null) game.handleInput(in, (InetSocketAddress) packet.getSocketAddress());   // garbage is ignored
+            if (in != null) rooms.handleInput(in, (InetSocketAddress) packet.getSocketAddress());   // garbage is ignored
         }
     }
 

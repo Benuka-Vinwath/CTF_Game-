@@ -19,6 +19,7 @@ import java.util.List;
  * Everything decorative (animation frames, particles, light) is derived locally from the snapshots.
  */
 public class GamePanel extends JPanel {
+    private static final long serialVersionUID = 1L;   // Swing components are Serializable; we never serialize them
     static final String[] TEAM_NAME = {"RED", "BLUE"};
     static final Color[] TEAM = {new Color(235, 70, 70), new Color(70, 150, 255)};
     static final long INTERP_DELAY_NS = 100_000_000L; // render 100ms in the past (~3 snapshots)
@@ -1097,6 +1098,15 @@ public class GamePanel extends JPanel {
             Art.plate(g, leaveBtn.x, leaveBtn.y, leaveBtn.width, leaveBtn.height, 7, hov ? new Color(255, 150, 135) : new Color(150, 95, 110), time, false);
             g.setFont(Type.ui(12.5f, true));
             Art.textCenter(g, "←  LEAVE", leaveBtn.x, leaveBtn.width, leaveBtn.y + 20, hov ? Color.WHITE : new Color(230, 200, 205));
+        }
+        String code = link.roomCode();
+        if (code != null) {   // the room code to share with friends
+            double ry = y0 + (exits != null ? 106 : 68);
+            Art.plate(g, x0 + 14, ry, 210, 46, 9, new Color(255, 205, 90), time, fx);
+            g.setFont(Type.ui(11.5f, true));
+            Art.text(g, link.roomPublic() ? "PUBLIC ROOM" : "PRIVATE ROOM  ·  share the code", x0 + 28, ry + 17, new Color(225, 215, 190));
+            g.setFont(Art.title(17));
+            Art.text(g, "CODE  " + code, x0 + 28, ry + 38, new Color(255, 225, 140));
         }
 
         double bw = 200, bh = 48, bx = x0 + w - bw - 18, by = y0 + h - bh - 18;
