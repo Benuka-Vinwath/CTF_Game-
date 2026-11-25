@@ -299,12 +299,15 @@ public class NetClient implements NetLink {
 
     /** Called about 30 times a second. A lost packet is harmless: the next one replaces it. */
     @Override
-    public void sendInput(int dx, int dy, double aim, boolean shoot) {
+    public void sendInput(int dx, int dy, double aim, boolean shoot) { sendInput(dx, dy, aim, shoot, 0); }
+
+    @Override
+    public void sendInput(int dx, int dy, double aim, boolean shoot, int throwDist) {
         DatagramSocket u = udp;
         InetSocketAddress to = udpServer;
         if (!connected || u == null || to == null || myId < 0) return;
         String line = Protocol.encodeInput(new Protocol.Input(myId, token,
-                inputSeq.incrementAndGet(), dx, dy, aim, shoot));
+                inputSeq.incrementAndGet(), dx, dy, aim, shoot, throwDist));
         if (rng.nextInt(100) < simLossPercent) {
             statSimLost.incrementAndGet();
             return;

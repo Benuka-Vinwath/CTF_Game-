@@ -17,8 +17,8 @@ public class UdpServer implements Runnable {
     private final DatagramSocket socket;
     private final RoomManager rooms;
 
-    public UdpServer(int port, RoomManager rooms) throws SocketException {
-        this.socket = new DatagramSocket(port);
+    public UdpServer(InetSocketAddress bindTo, RoomManager rooms) throws SocketException {
+        this.socket = new DatagramSocket(bindTo);
         this.rooms = rooms;
     }
 

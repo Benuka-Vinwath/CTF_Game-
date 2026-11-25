@@ -1,6 +1,7 @@
 package ctf.server;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.Executors;
@@ -28,12 +29,15 @@ public class GameServer {
      * Opens the TCP and UDP sockets now (so a busy port fails here, with an IOException the caller can show),
      * then serves on background threads. Returns the accept thread.
      */
-    public static Thread start(int port, int minPlayers) throws IOException {
+    public static Thread start(int port, int minPlayers) throws IOException { return start(port, minPlayers, null); }
+
+    /** bindTo: null listens on every network; InetAddress.getLoopbackAddress() only on this computer (SOLO: no firewall prompt). */
+    public static Thread start(int port, int minPlayers, java.net.InetAddress bindTo) throws IOException {
         RoomManager rooms = new RoomManager(minPlayers, port);
-        ServerSocket server = new ServerSocket(port);
+        ServerSocket server = new ServerSocket(port, 50, bindTo);
         UdpServer udp;
         try {
-            udp = new UdpServer(port, rooms);
+            udp = new UdpServer(new InetSocketAddress(bindTo, port), rooms);
         } catch (IOException e) {
             server.close();
             throw e;

@@ -14,7 +14,7 @@ public class Main {
         if (System.getProperty("sun.java2d.opengl") == null) System.setProperty("sun.java2d.opengl", "true");
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> logError("Uncaught error in thread " + t.getName(), e));
 
-        String host = args.length > 0 ? args[0] : null;   // optional: prefills the Join address
+        String host = args.length > 0 ? args[0] : null;   // optional: the ONLINE server instead of online-server.txt (localhost to test)
         SwingUtilities.invokeLater(() -> new GameWindow(host).setVisible(true));
     }
 

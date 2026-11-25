@@ -28,6 +28,26 @@ final class Sfx {
         CLIPS.put("deflect", tone(1200, 450, 110, true));
         CLIPS.put("expire", tone(650, 220, 180, false));
         CLIPS.put("firework", tone(180, 70, 320, true));
+        CLIPS.put("throw", tone(520, 180, 140, true));
+        CLIPS.put("boom", boom());
+    }
+
+    /** A grenade blast: a low thump under rumbling, darkening noise, fading over most of a second. */
+    private static byte[] boom() {
+        int n = 22050 * 900 / 1000;
+        byte[] b = new byte[n];
+        Random r = new Random(7);
+        double lp = 0, ph = 0;
+        for (int i = 0; i < n; i++) {
+            double t = (double) i / 22050;
+            double k = 0.35 * Math.exp(-t * 3) + 0.04;   // the noise gets duller as it fades
+            lp += k * ((r.nextDouble() * 2 - 1) - lp);
+            ph += 2 * Math.PI * (70 * Math.exp(-t * 4) + 30) / 22050;   // the thump drops in pitch
+            double s = lp * 2.6 + Math.sin(ph) * 0.9 * Math.exp(-t * 6);
+            double env = Math.min(1, t / 0.004) * Math.exp(-t * 3.2);
+            b[i] = (byte) Math.max(-127, Math.min(127, s * 95 * env));
+        }
+        return b;
     }
 
     private static byte[] tone(double f0, double f1, int ms, boolean noisy) {

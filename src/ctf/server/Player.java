@@ -18,6 +18,9 @@ public class Player {
     public double respawnIn;           // seconds until respawn while dead
     public double shieldSec;           // remaining invulnerability
     public double fireCd;              // seconds until the next shot is allowed
+    public int grenades;               // left this life (MapData.GRENADES)
+    public double throwCd;             // seconds until the next throw is allowed
+    public double throwDist;           // a requested throw: distance in px, 0 = none
 
     // Latest input from UDP. The client sends intentions only, never positions.
     public int dx, dy;
@@ -32,6 +35,7 @@ public class Player {
     public int hat, hatColor;          // chosen at the lobby laptop; hat 0 = none
     public int level = 1, title;       // from the player's profile, shown on name tags
     public int targetHits;             // practice-target hits in the current lobby
+    Bot bot;                           // null for a human; a bot decides its own input every tick
 
     public Player(int id, String name, int team, int token, Conn conn) {
         this.id = id;

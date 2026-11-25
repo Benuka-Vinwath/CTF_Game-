@@ -222,9 +222,9 @@ final class LobbyRoom {
         g.setFont(Type.ui(13, true));
         Art.textCenter(g, mode + "v" + mode + "     RED " + count[0] + "/" + mode + "  ·  BLUE " + count[1] + "/" + mode,
             bx, bwid, bw[1] + 28, new Color(225, 225, 255));
-        Art.textCenter(g, "READY " + ready + "/" + total + (full ? "" : "     teams not full yet"),
-            bx, bwid, bw[1] + 46, ready == total && full ? new Color(120, 240, 140) : new Color(200, 195, 230));
-        boolean waiting = ready == total && full;
+        Art.textCenter(g, "READY " + ready + "/" + total + (full ? "" : "     bots fill empty slots"),
+            bx, bwid, bw[1] + 46, ready == total ? new Color(120, 240, 140) : new Color(200, 195, 230));
+        boolean waiting = ready == total && total > 0;
         String status = countdown > 0 ? "MATCH STARTS IN " + (int) Math.ceil(countdown)
             : waiting ? "Waiting for host " + host + " to start" : lastMatch != null ? lastMatch : "Host: " + host;
         Art.textCenter(g, status, bx, bwid, bw[1] + 64, countdown > 0 || (!waiting && lastMatch != null) ? new Color(255, 205, 90) : new Color(170, 165, 210));

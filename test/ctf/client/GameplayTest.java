@@ -47,6 +47,7 @@ public class GameplayTest {
         runTest("Menu: Clicking HOST And JOIN Buttons Reaches The Game", GameplayTest::testMenuButtons);
         runTest("Menu: QUIT Asks First", GameplayTest::testQuitAsksFirst);
         runTest("Menu: Online Rooms (Quick, Create, Join Code, List)", GameplayTest::testOnlineRooms);
+        runTest("Grenades: Throw Arc (G Held), Grenade And Blast Paint", GameplayTest::testGrenadeDrawing);
         runTest("Esc Menu: Leave Lobby At Once, Quit Mid-Match Asks First", GameplayTest::testEscMenu);
         runTest("Profile Database: Matches, XP, Levels, Achievements, Locks, Reset", GameplayTest::testProfile);
         runTest("online-server.txt: Address Read, Comments Skipped, Missing = No Button", GameplayTest::testOnlineServerFile);
@@ -540,14 +541,14 @@ public class GameplayTest {
         java.nio.file.Path dir;
         try { dir = java.nio.file.Files.createTempDirectory("throne-menu"); } catch (java.io.IOException e) { throw new RuntimeException(e); }
         MenuScreen menu = new MenuScreen(new MenuScreen.Actions() {
-            public void host() { did.add("host"); }
-            public void join(String address) { did.add("join " + address); }
+            public void solo(int mode) { did.add("solo " + mode); }
+            public void listRooms(String address) { did.add("rooms " + address); }
             public void quit() {}
             public void toggleFullscreen() {}
             public boolean fullscreen() { return false; }
         }, new Profile(dir.resolve("profile.db"), node));   // a throwaway profile: the player's own is never touched
         menu.setSize(1600, 900);   // 1:1 with the menu's canvas, so canvas points are pixels
-        menu.setAddress("localhost");
+        menu.setOnlineServer("localhost:5000");
         BufferedImage img = new BufferedImage(1600, 900, BufferedImage.TYPE_INT_RGB);
         Runnable paint = () -> { Graphics2D g = img.createGraphics(); menu.paint(g); g.dispose(); };
         java.util.function.BiConsumer<Integer, Integer> click = (x, y) -> {
@@ -558,13 +559,13 @@ public class GameplayTest {
             paint.run();
             click.accept(200, 335);   // PLAY on the main menu (first row)
             paint.run();
-            click.accept(217, 703);   // HOST button inside the host card
+            click.accept(217, 703);   // PLAY button inside the solo card
             paint.run();
-            click.accept(697, 711);   // JOIN button inside the join card
+            click.accept(800, 722);   // ONLINE button inside the online card
         });
         try { node.removeNode(); } catch (Exception ignored) { /* test settings only */ }
-        assertTrue(did.contains("host"), "clicking HOST hosts (" + did + ")");
-        assertTrue(did.contains("join localhost"), "clicking JOIN joins the typed address (" + did + ")");
+        assertTrue(did.contains("solo 1"), "clicking PLAY on the solo card starts a 1v1 solo game (" + did + ")");
+        assertTrue(did.contains("rooms localhost:5000"), "clicking ONLINE opens the rooms page of the online server (" + did + ")");
     }
 
     /** ONLINE opens the rooms page: quick play, create (size, public/private), join by typed code, and join from the list. */
@@ -574,8 +575,6 @@ public class GameplayTest {
         java.nio.file.Path dir;
         try { dir = java.nio.file.Files.createTempDirectory("throne-rooms"); } catch (java.io.IOException e) { throw new RuntimeException(e); }
         MenuScreen menu = new MenuScreen(new MenuScreen.Actions() {
-            public void host() {}
-            public void join(String address) {}
             public void online(String address, String room) { did.add(address + " " + room); }
             public void listRooms(String address) { did.add("list " + address); }
             public void quit() {}
@@ -622,6 +621,40 @@ public class GameplayTest {
             "a typed code (cleaned up) and a listed room both join by code (" + did + ")");
     }
 
+    /** Holding G draws the throw arc; a grenade, its warning and a blast all paint, over many frames (animated dash phases). */
+    static void testGrenadeDrawing() {
+        NetLink link = new NetLink() {
+            public void sendInput(int dx, int dy, double aim, boolean shoot) {}
+            public int pingMs() { return 20; }
+            public void requestPlayAgain() {}
+        };
+        GamePanel panel = new GamePanel(link, 1);
+        panel.setSize(MapData.W, MapData.H);
+        java.util.function.BiFunction<Long, double[][], Snapshot> snap = (tick, gr) -> {
+            Snapshot s = new Snapshot();
+            s.tick = tick;
+            s.phase = Snapshot.PLAYING;
+            Snapshot.P me = new Snapshot.P(); me.id = 1; me.x = 300; me.y = 300; me.grenades = 2;
+            s.players = new Snapshot.P[]{me};
+            s.grenades = gr;
+            return s;
+        };
+        panel.onSnapshot(snap.apply(1L, new double[][]{{5, 500, 300, 0, 0.3}}));
+        panel.onSnapshot(snap.apply(2L, new double[0][]));   // it bursts
+        onEdt(() -> {
+            for (java.awt.event.KeyListener l : panel.getKeyListeners())
+                l.keyPressed(new java.awt.event.KeyEvent(panel, java.awt.event.KeyEvent.KEY_PRESSED, 0, 0, java.awt.event.KeyEvent.VK_G, 'g'));
+        });
+        BufferedImage img = new BufferedImage(MapData.W, MapData.H, BufferedImage.TYPE_INT_ARGB);
+        for (int frame = 0; frame < 40; frame++) {   // 40 frames ~ 0.65 s: the dash phases move through every value
+            Graphics2D g = img.createGraphics();
+            paintOnEdt(panel, g);
+            g.dispose();
+            try { Thread.sleep(16); } catch (InterruptedException e) { throw new RuntimeException(e); }
+        }
+        assertTrue(true, "the throw arc, a grenade and its blast paint without errors");
+    }
+
     /** Choosing QUIT opens the "leave the throne room?" message; only its QUIT button (or ENTER after a moment) really quits. */
     static void testQuitAsksFirst() {
         java.util.List<String> did = new java.util.ArrayList<>();
@@ -629,8 +662,6 @@ public class GameplayTest {
         java.nio.file.Path dir;
         try { dir = java.nio.file.Files.createTempDirectory("throne-quit"); } catch (java.io.IOException e) { throw new RuntimeException(e); }
         MenuScreen menu = new MenuScreen(new MenuScreen.Actions() {
-            public void host() {}
-            public void join(String address) {}
             public void quit() { did.add("quit"); }
             public void toggleFullscreen() {}
             public boolean fullscreen() { return false; }
