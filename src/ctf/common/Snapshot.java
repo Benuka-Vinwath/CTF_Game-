@@ -14,6 +14,7 @@ public final class Snapshot {
         public double aim; // radians, where the gun points
         public boolean alive = true;
         public double shieldSec; // remaining invulnerability seconds
+        public int grenades;     // left this life
     }
 
     public static final class F {
@@ -26,6 +27,8 @@ public final class Snapshot {
     public P[] players = new P[0];
     public F[] flags = {new F(), new F()};      // index = team that owns the flag
     public double[][] bullets = new double[0][]; // x, y, team
+    public double[][] grenades = new double[0][]; // id, x, y, team, seconds until it explodes
+    public double armoryCooldown;               // seconds until the armory crate gives a grenade again
     public int[] score = new int[2];
     public int timeLeftSec;
     public int winner = -1;                     // -1 = round running

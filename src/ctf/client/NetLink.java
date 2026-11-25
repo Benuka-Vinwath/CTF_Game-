@@ -6,6 +6,8 @@ import ctf.common.Protocol;
 public interface NetLink {
     /** dx, dy in {-1,0,1}; aim in radians; called ~30 times/sec. */
     void sendInput(int dx, int dy, double aim, boolean shoot);
+    /** throwDist: a grenade throw this far toward the aim, in px; 0 = none. Offline links ignore it. */
+    default void sendInput(int dx, int dy, double aim, boolean shoot, int throwDist) { sendInput(dx, dy, aim, shoot); }
     int pingMs();
     void requestPlayAgain();
     default void toggleLagSim() {}

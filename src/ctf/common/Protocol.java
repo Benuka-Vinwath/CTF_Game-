@@ -25,7 +25,7 @@ public final class Protocol {
     private Protocol() {}
 
     /** Sent with HELLO; the server refuses other versions with a clear message, because the wire format changes between them. */
-    public static final String VERSION = "1.3";   // 1.3: rooms (HELLO's 8th field, ROOM, ROOMS)
+    public static final String VERSION = "1.5";   // 1.3: rooms; 1.4: bots fill empty slots on START; 1.5: grenades (input and snapshot fields)
 
     /**
      * Which room a HELLO joins: its optional 8th field. Missing means QUICK, so a client that knows nothing about
@@ -59,7 +59,10 @@ public final class Protocol {
         return out;
     }
 
-    public record Input(int id, int token, int seq, int dx, int dy, double aim, boolean shoot) {}
+    /** throwDist: a grenade throw toward the aim, this far in px (0 = no throw). */
+    public record Input(int id, int token, int seq, int dx, int dy, double aim, boolean shoot, int throwDist) {
+        public Input(int id, int token, int seq, int dx, int dy, double aim, boolean shoot) { this(id, token, seq, dx, dy, aim, shoot, 0); }
+    }
 
     public record Stat(int id, int tags, int captures, int deaths, int score, int ping) {}
 
@@ -84,19 +87,20 @@ public final class Protocol {
 
     public static String encodeInput(Input in) {
         return "I " + in.id() + " " + in.token() + " " + in.seq() + " " + in.dx() + " " + in.dy()
-                + " " + f2(in.aim()) + " " + (in.shoot() ? 1 : 0);
+                + " " + f2(in.aim()) + " " + (in.shoot() ? 1 : 0) + " " + in.throwDist();
     }
 
-    /** dx and dy are clamped to -1, 0, 1 so a modified client cannot move faster. */
+    /** dx and dy are clamped to -1, 0, 1 and a throw to 0..GRENADE_RANGE, so a modified client cannot cheat. */
     public static Input decodeInput(String line) {
         try {
             String[] t = line.trim().split(" ");
-            if (t.length != 8 || !t[0].equals("I")) return null;
+            if ((t.length != 8 && t.length != 9) || !t[0].equals("I")) return null;
             double aim = Double.parseDouble(t[6]);
             if (Double.isNaN(aim) || Double.isInfinite(aim)) return null;
+            int throwDist = t.length == 9 ? Math.max(0, Math.min(Integer.parseInt(t[8]), (int) MapData.GRENADE_RANGE)) : 0;
             return new Input(Integer.parseInt(t[1]), Integer.parseInt(t[2]), Integer.parseInt(t[3]),
                     Integer.signum(Integer.parseInt(t[4])), Integer.signum(Integer.parseInt(t[5])),
-                    aim, t[7].equals("1"));
+                    aim, t[7].equals("1"), throwDist);
         } catch (NumberFormatException e) {
             return null;
         }
@@ -119,12 +123,18 @@ public final class Protocol {
         for (Snapshot.P p : s.players) {
             sb.append(' ').append(p.id).append(' ').append(p.team).append(' ').append(f1(p.x)).append(' ')
               .append(f1(p.y)).append(' ').append(f2(p.aim)).append(' ').append(p.alive ? 1 : 0)
-              .append(' ').append(f2(p.shieldSec));
+              .append(' ').append(f2(p.shieldSec)).append(' ').append(p.grenades);
         }
         sb.append(' ').append(s.bullets.length);
         for (double[] b : s.bullets) {
             sb.append(' ').append(f1(b[0])).append(' ').append(f1(b[1])).append(' ').append((int) b[2]);
         }
+        sb.append(' ').append(s.grenades.length);
+        for (double[] g : s.grenades) {
+            sb.append(' ').append((long) g[0]).append(' ').append(f1(g[1])).append(' ').append(f1(g[2]))
+              .append(' ').append((int) g[3]).append(' ').append(f2(g[4]));
+        }
+        sb.append(' ').append(f1(s.armoryCooldown));
         return sb.toString();
     }
 
@@ -163,6 +173,7 @@ public final class Protocol {
                 p.aim = Double.parseDouble(t[i++]);
                 p.alive = t[i++].equals("1");
                 p.shieldSec = Double.parseDouble(t[i++]);
+                p.grenades = Integer.parseInt(t[i++]);
                 s.players[k] = p;
             }
             int nb = Integer.parseInt(t[i++]);
@@ -173,6 +184,15 @@ public final class Protocol {
                         Integer.parseInt(t[i + 2])};
                 i += 3;
             }
+            int ng = Integer.parseInt(t[i++]);
+            if (ng < 0 || ng > 64) return null;
+            s.grenades = new double[ng][];
+            for (int k = 0; k < ng; k++) {
+                s.grenades[k] = new double[]{Long.parseLong(t[i]), Double.parseDouble(t[i + 1]), Double.parseDouble(t[i + 2]),
+                        Integer.parseInt(t[i + 3]), Double.parseDouble(t[i + 4])};
+                i += 5;
+            }
+            s.armoryCooldown = Double.parseDouble(t[i++]);
             return s;
         } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
             return null;

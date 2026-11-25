@@ -22,6 +22,17 @@ public final class MapData {
     public static final double SHIELD_DURATION = 5.0;// duration of invulnerability in seconds
     public static final double TENT_RECHARGE = 10.0; // cooldown in seconds before tent can be collected again
 
+    /** Grenades: thrown toward the mouse, bounce off walls, explode after the fuse. Walls block the blast. */
+    public static final int GRENADES = 2;              // carried per life
+    public static final double GRENADE_RANGE = 260;    // px, the farthest throw
+    public static final double GRENADE_TRAVEL = 0.8;   // s until a throw comes to rest
+    public static final double GRENADE_FUSE = 1.5;     // s from throw to explosion
+    public static final double BLAST_R = 90;           // px
+    public static final double THROW_COOLDOWN = 3.0;   // s between throws
+    /** The armory crate gives one grenade back; on the centre line it is equally far from both bases (and clear of the HUD). */
+    public static final double ARMORY_X = 560, ARMORY_Y = 118, ARMORY_R = 32;
+    public static final double ARMORY_RECHARGE = 15.0;
+
     /** Keeps a circle of radius R inside the arena and out of walls. */
     public static void resolve(double[] p) { resolve(p, WALLS); }
 

@@ -145,8 +145,9 @@ public class ServerLogicTest {
         check(g.mode() == 2, "the host picks 2v2");
         for (Player p : ps) g.setReady(p.id, true);
         g.begin(p(0).id);
-        check(g.countdown() == 0, "2v2 cannot start with one player per team");
+        check(g.countdown() > 0 && g.bots().size() == 2, "START with one player per team in a 2v2: a bot fills each empty slot");
         Player c = g.addPlayer("C", 0, new FakeConn()), d = g.addPlayer("D", 1, new FakeConn());
+        check(g.bots().isEmpty() && g.countdown() == 0, "joining humans take the bots' places (and are not ready yet)");
         g.setReady(c.id, true);
         g.setReady(d.id, true);
         g.begin(p(0).id);
@@ -603,6 +604,186 @@ public class ServerLogicTest {
                 "the server caps the number of rooms (" + RoomManager.MAX_ROOMS + ")");
     }
 
+    // ------------------------------------------------------------------ bots
+
+    void botsFillEmptySlots() {
+        GameState r = new GameState(2, 2, 5000, new Random(4), counterIds());
+        FakeConn host = new FakeConn();
+        Player me = r.addPlayer("Me", 0, host);
+        r.begin(me.id);
+        check(r.bots().isEmpty() && r.countdown() == 0, "nothing happens while a human is not ready");
+        r.setReady(me.id, true);
+        r.begin(me.id);
+        List<Player> bots = r.bots();
+        check(bots.size() == 3 && r.countdown() > 0, "START fills a 2v2 with 3 bots and counts down (" + bots.size() + " bots)");
+        check(bots.stream().allMatch(b -> b.ready && b.name.startsWith("Bot_")), "bots are ready and named Bot_...");
+        check(bots.stream().filter(b -> b.team == 0).allMatch(b -> b.bot.type == Bot.Type.GUARDIAN)
+                && bots.stream().filter(b -> b.team == 1).map(b -> b.bot.type).toList().equals(List.of(Bot.Type.RAIDER, Bot.Type.GUARDIAN)),
+                "styles follow the slot: a human's teammate guards, a bot team gets a raider and a guardian");
+        check(r.playerCount() == 1 && r.hasRoom(), "bots do not count as players: the room still has room for humans");
+        check(host.lines.stream().anyMatch(l -> l.startsWith("LOBBY") && l.contains("Bot_Raider")), "bots appear in the lobby list");
+        r.setMode(me.id, 1);
+        check(r.mode() == 1 && r.bots().size() == 1, "a smaller match size sends the extra bots away");
+        r.removePlayer(me.id);
+        check(r.bots().isEmpty() && r.playerCount() == 0, "bots leave with the last human");
+    }
+
+    void humansReplaceBotsMidMatch() {
+        GameState r = new GameState(2, 1, 5000, new Random(5), counterIds());
+        Player me = r.addPlayer("Me", 0, new FakeConn());
+        r.setReady(me.id, true);
+        r.begin(me.id);
+        for (int i = 0; i < COUNTDOWN_TICKS; i++) r.tick();
+        check(r.phase() == GameState.Phase.PLAYING && r.bots().size() == 1, "a 1v1 against a bot starts");
+        FakeConn c = new FakeConn();
+        Player friend = r.addPlayer("Friend", -1, c);
+        check(friend != null && friend.team == 1 && r.bots().isEmpty() && c.got("START"), "a friend joining mid-match takes the bot's place");
+        check(r.addPlayer("Third", -1, new FakeConn()) == null, "two humans fill a 1v1: a third is refused");
+    }
+
+    void botsPlayToWin() {
+        GameState r = new GameState(2, 2, 5000, new Random(6), counterIds());
+        Player me = r.addPlayer("Me", 0, new FakeConn());
+        r.setReady(me.id, true);
+        r.begin(me.id);
+        for (int i = 0; i < COUNTDOWN_TICKS; i++) r.tick();
+        int ticks = 0;
+        boolean threw = false;
+        while (r.phase() == GameState.Phase.PLAYING && ticks < GameState.TICK_RATE * 240) {
+            me.x = 80; me.y = 40; me.alive = false; me.respawnIn = 99;   // the human stays out of it: bots against bots
+            r.tick();
+            threw |= r.grenadeCount() > 0;
+            ticks++;
+        }
+        check(threw, "bots throw grenades in a match");
+        check(r.score(0) + r.score(1) > 0, "bots path around the walls and capture flags (" + r.score(0) + "-" + r.score(1)
+                + " after " + ticks / GameState.TICK_RATE + " s)");
+        check(r.bots().stream().mapToInt(b -> b.tags).sum() > 0, "bots find and shoot each other");
+    }
+
+    void botNavigation() {
+        double[] red = ctf.common.MapData.BASES[0], blue = ctf.common.MapData.BASES[1];
+        List<double[]> path = Bot.Nav.path(red[0], red[1], blue[0], blue[1]);
+        check(!path.isEmpty() && path.stream().allMatch(w -> !ctf.common.MapData.nearSolid(w[0], w[1], ctf.common.MapData.R)),
+                "A* finds a way from base to base that never touches a wall");
+        check(!Bot.Nav.clearShot(480, 315, 640, 315) && Bot.Nav.clearShot(100, 560, 400, 560),
+                "line of sight: blocked by the middle wall, clear in the open");
+        check(java.util.Arrays.equals(Bot.dir8(10, 0.5), new int[]{1, 0}) && java.util.Arrays.equals(Bot.dir8(-3, -3), new int[]{-1, -1}),
+                "bots move in the same 8 directions as players");
+        GameState r = new GameState(2, 1, 5000, new Random(7), counterIds());
+        Player me = r.addPlayer("Me", 0, new FakeConn());
+        r.setReady(me.id, true);
+        r.begin(me.id);
+        for (int i = 0; i < COUNTDOWN_TICKS; i++) r.tick();
+        Player b = r.bots().get(0);
+        double x0 = b.x, y0 = b.y;
+        boolean legal = true;
+        for (int i = 0; i < 90; i++) {
+            r.tick();
+            legal &= Math.abs(b.dx) <= 1 && Math.abs(b.dy) <= 1;
+        }
+        check(legal && Math.hypot(b.x - x0, b.y - y0) > 100, "a bot leaves its base within 3 s, using only legal moves");
+    }
+
+    // ------------------------------------------------------------------ grenades
+
+    private void throwAt(Player p, double aim, double dist) { p.aim = aim; p.throwDist = dist; }
+
+    private void ticksSec(double s) { ticks((int) Math.round(s * GameState.TICK_RATE)); }
+
+    void grenadeBlast() {
+        newGame(0, 1);
+        Player a = p(0), b = p(1);
+        place(a, 150, 560);
+        place(b, 350, 560);
+        throwAt(a, 0, 200);
+        g.tick();
+        check(g.grenadeCount() == 1 && a.grenades == MapData.GRENADES - 1, "a throw makes a grenade and uses one up");
+        ticksSec(1.0);
+        check(b.alive, "nothing happens before the fuse runs out");
+        ticksSec(0.6);
+        check(g.grenadeCount() == 0 && !b.alive && a.tags == 1, "it lands where aimed and the blast eliminates the enemy there");
+    }
+
+    void grenadeWallsTeamsShields() {
+        newGame(0, 1, 0, 1);
+        Player a = p(0), behindWall = p(1), mate = p(2), shielded = p(3);
+        place(a, 640, 300);
+        place(behindWall, 525, 300);   // 75 px from the blast, but the middle wall is in between
+        place(mate, 600, 320);
+        place(shielded, 620, 330);
+        shielded.shieldSec = 5;
+        throwAt(a, Math.PI, 40);
+        ticksSec(1.7);
+        check(behindWall.alive, "walls block the blast");
+        check(mate.alive && a.alive, "the thrower and teammates are not hurt");
+        check(shielded.alive, "the tent shield protects from the blast");
+    }
+
+    void grenadeLimits() {
+        newGame(0, 1);
+        Player a = p(0), b = p(1);
+        place(a, 150, 560);
+        place(b, 900, 120);
+        throwAt(a, 0, 100);
+        g.tick();
+        throwAt(a, 0, 100);
+        g.tick();
+        check(g.grenadeCount() == 1 && a.grenades == 1, "the cooldown stops a second throw straight away");
+        ticksSec(MapData.THROW_COOLDOWN);
+        throwAt(a, 0, 100);
+        g.tick();
+        check(a.grenades == 0, "after the cooldown the second grenade goes");
+        ticksSec(MapData.THROW_COOLDOWN);
+        throwAt(a, 0, 100);
+        g.tick();
+        check(a.grenades == 0 && g.grenadeCount() == 0, "with none left, nothing is thrown");
+        place(a, MapData.ARMORY_X, MapData.ARMORY_Y);
+        g.tick();
+        check(a.grenades == 1, "the armory crate gives one back");
+        a.grenades = 0;
+        g.tick();
+        check(a.grenades == 0, "and then recharges before giving another");
+        place(b, 350, 560);
+        place(a, 150, 560);
+        a.grenades = 1;
+        g.flag(0).pickUp(b);
+        throwAt(a, 0, 200);
+        ticksSec(1.6);
+        check(!b.alive && g.flag(0).state == Flag.State.DROPPED, "a flag carrier caught in the blast drops the flag");
+        ticksSec(GameState.RESPAWN_SEC + 0.2);
+        check(b.alive && b.grenades == MapData.GRENADES, "every new life starts with a full pair");
+    }
+
+    void grenadesInTheLobby() {
+        newLobby(0, 1);
+        Player a = p(0), b = p(1);
+        place(b, a.x + 60, a.y);
+        throwAt(a, 0, 60);
+        g.tick();
+        check(g.grenadeCount() == 1 && a.grenades == MapData.GRENADES, "lobby throws are practice: no grenade is used up");
+        ticksSec(1.7);
+        check(g.grenadeCount() == 0 && b.alive, "and nobody is hurt in the lobby");
+    }
+
+    void grenadeProtocol() {
+        Protocol.Input in = Protocol.decodeInput(Protocol.encodeInput(new Protocol.Input(3, 77, 9, 1, 0, 0.5, false, 180)));
+        check(in != null && in.throwDist() == 180, "a throw survives the input packet");
+        check(Protocol.decodeInput("I 3 77 9 1 0 0.50 0 999").throwDist() == (int) MapData.GRENADE_RANGE, "a too-long throw is clamped to the range");
+        check(Protocol.decodeInput("I 3 77 9 1 0 0.50 0").throwDist() == 0, "an input without the throw field still decodes");
+        newGame(0, 1);
+        throwAt(p(0), 0, 120);
+        g.tick();
+        Snapshot s = Protocol.decodeSnapshot(g.snapshotLine());
+        check(s != null && s.grenades.length == 1 && s.grenades[0][3] == 0 && s.grenades[0][4] > 1.4
+                && s.players[0].grenades == 1 && s.players[1].grenades == 2, "grenades, their fuse and everyone's ammo are in the snapshot");
+    }
+
+    private static java.util.function.IntSupplier counterIds() {
+        int[] next = {1};
+        return () -> next[0]++;
+    }
+
     /** Over real sockets: create a private room, join it by code, list rooms, and a wrong code. */
     void roomsOverSockets() {
         int port = 49000 + new Random().nextInt(2000);
@@ -720,6 +901,15 @@ public class ServerLogicTest {
         t.run("rooms are separate matches", t::roomsAreSeparateMatches);
         t.run("room join rules", t::roomJoinRules);
         t.run("rooms over sockets", t::roomsOverSockets);
+        t.run("bots fill empty slots", t::botsFillEmptySlots);
+        t.run("humans replace bots", t::humansReplaceBotsMidMatch);
+        t.run("bot navigation", t::botNavigation);
+        t.run("bots play to win", t::botsPlayToWin);
+        t.run("grenade blast", t::grenadeBlast);
+        t.run("grenade walls, teams, shields", t::grenadeWallsTeamsShields);
+        t.run("grenade limits and armory", t::grenadeLimits);
+        t.run("grenades in the lobby", t::grenadesInTheLobby);
+        t.run("grenade protocol", t::grenadeProtocol);
         System.out.println("\nPassed: " + passed + " | Failed: " + failed);
         if (failed > 0) System.exit(1);
     }

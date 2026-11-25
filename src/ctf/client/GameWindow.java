@@ -22,21 +22,21 @@ import java.io.IOException;
  */
 public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions, GamePanel.Exits {
     private static final long serialVersionUID = 1L;
-    static final int PORT = 5000;
+    static final int PORT = 5000, SOLO_PORT = 5001;
 
     private final Profile profile = Profile.open();   // SQLite file in the user folder: name, looks, XP, match history
     private final MenuScreen menu = new MenuScreen(this, profile);
     private volatile NetClient client;
     private volatile GamePanel panel;   // set while a game is open
     private GameView gameView;
-    private boolean fullscreen, hosting;
+    private boolean fullscreen, soloServer;
     private volatile boolean leaving;   // the player chose to leave: the disconnect that follows is not an error
     private volatile String refusal;    // the server's ERROR when it refused us, shown instead of "Disconnected"
 
-    /** address: prefilled on the Play screen when given on the command line (play.ps1), else the last one used. */
+    /** address: from the command line (play.ps1), the ONLINE server to use instead of online-server.txt, e.g. localhost for testing. */
     public GameWindow(String address) {
         super("The ThroneFall");
-        if (address != null) menu.setAddress(address);
+        if (address != null) menu.setOnlineServer(address.contains(":") ? address : address + ":" + PORT);
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             @Override public void windowClosing(WindowEvent e) {
@@ -62,22 +62,20 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
 
     // ------------------------------------------------------------------ menu actions
 
+    /** SOLO: a private server on this computer only, a room of that size; START in the lobby fills it with bots. Works offline. */
     @Override
-    public void host() {
-        if (!hosting) {
+    public void solo(int mode) {
+        if (!soloServer) {
             try {
-                GameServer.start(PORT, 2);   // lives as long as this window; the lobby needs two full teams to start
-                hosting = true;
+                GameServer.start(SOLO_PORT, 2, java.net.InetAddress.getLoopbackAddress());   // lives as long as this window
+                soloServer = true;
             } catch (IOException e) {
-                menu.setStatus("Could not host: port " + PORT + " is busy. Is a game already hosting on this computer?", true, false);
+                menu.setStatus("Could not start solo: port " + SOLO_PORT + " is busy. Is another copy of the game open?", true, false);
                 return;
             }
         }
-        connect("localhost", PORT);
+        connect("127.0.0.1", SOLO_PORT, Protocol.create(mode, false));
     }
-
-    @Override
-    public void join(String address) { online(address, Protocol.QUICK); }
 
     /** Enter a room on that server: Protocol.QUICK, Protocol.create(...) or Protocol.join(code). */
     @Override
@@ -115,8 +113,6 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
         return new Object[]{address, PORT};
     }
 
-    private void connect(String host, int port) { connect(host, port, Protocol.QUICK); }
-
     private void connect(String host, int port, String room) {
         if (client != null) return;
         menu.setStatus("Connecting to " + host + "...", false, true);
@@ -144,7 +140,7 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
     }
 
     @Override
-    public boolean hosting() { return hosting; }
+    public boolean hosting() { return false; }   // nobody hosts for others on their own computer any more (SOLO is private)
 
     @Override
     public java.util.List<String> matchFinished(Snapshot s, int myId, int mvpId, int lengthSec) {
@@ -183,7 +179,7 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
         if (gameView != null) gameView.stop();
         gameView = null;
         panel = null;
-        if (leaving) menu.setStatus(hosting ? "You left. Your game is still hosted here for the others." : "You left the game.", false, false);
+        if (leaving) menu.setStatus("You left the game.", false, false);
         else menu.setStatus(reason, true, false);
         leaving = false;
         show(menu);

@@ -18,14 +18,13 @@ import java.util.prefs.Preferences;
  * The ThroneFall title screen ("Throne room" design, docs/menu-design.html) and its pages: Play, How to play,
  * Settings and Credits. Everything is laid out on a 1600x900 canvas that is scaled to the window; the scene behind
  * it fills the whole window. Still parts are drawn once into images per window size, so a frame only draws what moves.
- * Choices (name, hat, last address, settings) are remembered between runs with java.util.prefs.
+ * Choices (name, hat, settings) are remembered between runs with java.util.prefs.
  */
 final class MenuScreen extends JComponent {
     private static final long serialVersionUID = 1L;
     /** What the menu asks the game window to do. */
     interface Actions {
-        void host();
-        void join(String address);
+        default void solo(int mode) {}                         // a private game against bots on this computer
         default void online(String address, String room) {}   // room: Protocol.QUICK / create(...) / join(code)
         default void listRooms(String address) {}              // answers through setRooms
         void quit();
@@ -52,19 +51,18 @@ final class MenuScreen extends JComponent {
     private Page page = Page.MAIN;
     private int sel;                      // selected main-menu item
     private int tile;                     // Play page: 0 host, 1 join
-    private boolean editName;             // Play page: typing goes into the name instead of the address
-    private final StringBuilder name = new StringBuilder(), address = new StringBuilder();
+    private final StringBuilder name = new StringBuilder();
     private int hat, hatColor;
     private boolean fx, shake;
     private float volume;
     private int lagDelay, lagLoss;
     private String status = "";
     private boolean statusError, busy;
-    private String lanAddress = "...";
     private String onlineServer = readOnlineServer(java.nio.file.Path.of("online-server.txt"));
     // Online Rooms page
     private final StringBuilder code = new StringBuilder();   // the room code being typed
     private int roomSize = 1;                                   // CREATE: players per team
+    private int soloSize = 1;                                   // SOLO: players per team (you + bots)
     private boolean roomPublic;                                 // CREATE: listed for everyone, or code only
     private List<ctf.common.Protocol.RoomInfo> rooms;           // the last ROOMS answer, or null
     private String roomsNote = "";                              // "Looking for rooms..." or why it failed
@@ -93,7 +91,6 @@ final class MenuScreen extends JComponent {
         this.actions = actions;
         this.profile = profile;
         name.append(profile.name());
-        address.append(prefs.get("address", "localhost"));
         hat = profile.hat();
         hatColor = profile.hatColor();
         title = profile.title();
@@ -121,7 +118,6 @@ final class MenuScreen extends JComponent {
         };
         addMouseListener(m);
         addMouseMotionListener(m);
-        new Thread(() -> lanAddress = findLanAddress(), "lan-address").start();
     }
 
     // ------------------------------------------------------------------ what the game window reads
@@ -134,8 +130,8 @@ final class MenuScreen extends JComponent {
     int lagDelay() { return lagDelay; }
     int lagLoss() { return lagLoss; }
 
-    void setAddress(String a) { address.setLength(0); address.append(a); }
-    void setOnlineServer(String a) { onlineServer = a; }   // tests; the game reads online-server.txt
+    /** The ONLINE server: from online-server.txt, or the address given on the command line (testing on this PC: localhost). */
+    void setOnlineServer(String a) { onlineServer = a; }
 
     void start() {
         fx = prefs.getBoolean("fx", fx);   // the in-game menu may have changed these
@@ -214,12 +210,10 @@ final class MenuScreen extends JComponent {
             else if (code.length() < 4 && ROOM_CHARS.indexOf(ch) >= 0) code.append(ch);
             return;
         }
-        boolean typing = page == Page.PLAY || page == Page.PROFILE;   // the Profile page types into the name only
+        boolean typing = page == Page.PLAY || page == Page.PROFILE;   // both pages type into the knight's name
         if (typing && (k == KeyEvent.VK_BACK_SPACE || (e.getKeyChar() >= ' ' && e.getKeyChar() < 127 && !e.isControlDown()))) {
-            if (page == Page.PROFILE) editName = true;
-            StringBuilder f = editName ? name : address;
-            if (k == KeyEvent.VK_BACK_SPACE) { if (f.length() > 0) f.setLength(f.length() - 1); }
-            else if (f.length() < (editName ? 12 : 60)) f.append(e.getKeyChar());
+            if (k == KeyEvent.VK_BACK_SPACE) { if (name.length() > 0) name.setLength(name.length() - 1); }
+            else if (name.length() < 12) name.append(e.getKeyChar());
             save();
             return;
         }
@@ -233,7 +227,6 @@ final class MenuScreen extends JComponent {
             case PLAY -> {
                 if (k == KeyEvent.VK_LEFT) tile = 0;
                 if (k == KeyEvent.VK_RIGHT) tile = 1;
-                if (k == KeyEvent.VK_TAB) editName = !editName;
                 if (k == KeyEvent.VK_ENTER) go(tile);
                 if (k == KeyEvent.VK_ESCAPE) back();
             }
@@ -248,7 +241,7 @@ final class MenuScreen extends JComponent {
     private void open(int item) {
         switch (item) {
             case 0 -> { page = Page.PLAY; status = ""; statusError = false; }
-            case 1 -> { page = Page.PROFILE; stats = profile.stats(); editName = true; }
+            case 1 -> { page = Page.PROFILE; stats = profile.stats(); }
             case 2 -> page = Page.HOWTO;
             case 3 -> page = Page.SETTINGS;
             case 4 -> { page = Page.CREDITS; creditsStart = time; }
@@ -299,17 +292,12 @@ final class MenuScreen extends JComponent {
         if (busy) return;
         if (playerName().isBlank()) { setStatus("Type a name first.", true, false); return; }
         save();
-        if (which == 0) actions.host();
-        else if (address.toString().isBlank()) setStatus("Type the host's address first.", true, false);
-        else {
-            prefs.put("lastJoined", address.toString().trim());
-            actions.join(address.toString().trim());
-        }
+        if (which == 0) actions.solo(soloSize);
+        else openOnline();
     }
 
     private void save() {
         profile.save(playerName(), hat, hatColor, title, team);   // name and looks live in the profile database
-        prefs.put("address", address.toString());
         prefs.putBoolean("fx", fx);
         prefs.putBoolean("shake", shake);
         prefs.putFloat("volume", volume);
@@ -793,7 +781,7 @@ final class MenuScreen extends JComponent {
         g.setFont(Type.royal(26, true, 0.1f));
         Art.text(g, playerName().toUpperCase(), x + 92, y + 34, new Color(244, 236, 255));
         g.setFont(Type.hud(15, true, 0.02f));
-        Art.text(g, LobbyRoom.HAT_NAMES[hat] + "  |  Last server: " + address, x + 92, y + 58, new Color(211, 207, 232));
+        Art.text(g, LobbyRoom.HAT_NAMES[hat], x + 92, y + 58, new Color(211, 207, 232));
     }
 
     /** The red knight sprite with the chosen hat; (cx, top) is the top centre of the sprite, k = canvas units per sprite pixel. */
@@ -974,7 +962,7 @@ final class MenuScreen extends JComponent {
         if (fx) Art.glow(g, new Color(110, 230, 130), 1314, y - 6, 12, 0.7f);
         g.fill(new Ellipse2D.Double(1308, y - 12, 11, 11));
         g.setFont(Type.hud(17, true, 0.08f));
-        Art.text(g, "LAN " + lanAddress + "   ·   v" + ctf.common.Protocol.VERSION, 1330, y, MUTED);
+        Art.text(g, "GAME VERSION " + ctf.common.Protocol.VERSION, 1330, y, MUTED);
     }
 
     private double keycap(Graphics2D g, String k, double x, double y) {
@@ -1329,44 +1317,21 @@ final class MenuScreen extends JComponent {
         g.setClip(oldClip);
         cardInset(g, x, y, w, h);
 
-        shineTextLeft(g, host ? "HOST A GAME" : "JOIN A GAME", Type.royal(40, true, 0.14f), bx + 40, by + 300,
+        shineTextLeft(g, host ? "SOLO GAME" : "PLAY ONLINE", Type.royal(40, true, 0.14f), bx + 40, by + 300,
             host ? new Color[]{new Color(255, 217, 207), new Color(255, 154, 130), new Color(216, 106, 86)}
                  : new Color[]{new Color(230, 244, 255), new Color(159, 210, 255), new Color(90, 166, 236)});
         g.setFont(Type.hud(19, true, 0.01f));
-        wrap(g, host ? "Light the beacon. Run the game on this computer and pick 1v1 to 4v4 in the lobby."
-            : "March to a friend's castle. Type the address shown on their Play screen.", bx + 40, by + 342, w - 80, 28, new Color(213, 207, 230));
+        wrap(g, host ? "Battle tough bots on this computer. No internet needed. Press START in the lobby."
+            : onlineServer != null ? "March to the great hall: quick play, open your own room, or join friends with a room code."
+            : "No online server is set yet. Put its address in online-server.txt next to the game.",
+            bx + 40, by + 342, w - 80, 28, new Color(213, 207, 230));
 
         if (host) {
-            g.setFont(Type.hud(19, true, 0.12f));
-            double lw = g.getFontMetrics().stringWidth("YOUR ADDRESS");
-            g.setFont(Type.hud(19, true, 0.06f));
-            double aw = g.getFontMetrics().stringWidth(lanAddress), pw = lw + 14 + aw + 36;
-            RoundRectangle2D pill = new RoundRectangle2D.Double(bx + 40, by + 396, pw, 40, 5, 5);
-            g.setColor(new Color(10, 6, 20, 180)); g.fill(pill);
-            g.setStroke(new BasicStroke(2f)); g.setColor(new Color(255, 205, 90, 190)); g.draw(pill);
-            g.setFont(Type.hud(19, true, 0.12f));
-            Art.text(g, "YOUR ADDRESS", bx + 58, by + 423, new Color(255, 242, 200));
-            g.setFont(Type.hud(19, true, 0.06f));
-            Art.text(g, lanAddress, bx + 58 + lw + 14, by + 423, Color.WHITE);
-            button(g, bx + 40, by + 498, 170, 54, busy && tile == 0 ? "..." : "HOST", false, () -> go(0));
-        } else {
-            playField(g, bx + 40, by + 394, 378, 54, address.toString(), !editName, false, () -> editName = false);
-            g.setFont(Type.hud(16, true, 0.05f));
-            double rx = bx + 40;
-            String last = prefs.get("lastJoined", "");
-            for (String r : last.isEmpty() || last.equals("localhost") ? new String[]{"localhost"} : new String[]{"localhost", last}) {
-                double rw = g.getFontMetrics().stringWidth(r) + 24;
-                Rectangle2D rr = new Rectangle2D.Double(rx, by + 458, rw, 28);
-                g.setColor(new Color(10, 20, 40, 180)); g.fill(rr);
-                g.setStroke(new BasicStroke(1.2f)); g.setColor(new Color(150, 200, 255, 130)); g.draw(rr);
-                Art.text(g, r, rx + 12, by + 478, new Color(185, 217, 255));
-                final String pick = r;
-                hits.add(new Object[]{rr, (Runnable) () -> { address.setLength(0); address.append(pick); editName = false; }});
-                rx += rw + 8;
-            }
-            button(g, bx + 40, by + 498, 156, 54, busy && tile == 1 ? "..." : "JOIN", true, () -> go(1));
-            if (onlineServer != null)   // the cloud server from online-server.txt: rooms with anyone, anywhere
-                button(g, bx + 208, by + 498, 190, 54, "ONLINE", false, this::openOnline);
+            playPicker(g, bx + 40, by + 410, 378, soloSize + " V " + soloSize, null,
+                () -> soloSize = soloSize == 1 ? 4 : soloSize - 1, () -> soloSize = soloSize == 4 ? 1 : soloSize + 1);
+            button(g, bx + 40, by + 498, 170, 54, busy && tile == 0 ? "..." : "PLAY", false, () -> go(0));
+        } else if (onlineServer != null) {
+            button(g, bx + 40, by + 498, 378, 54, busy && tile == 1 ? "..." : "ONLINE", true, () -> go(1));
         }
     }
 
@@ -1381,7 +1346,7 @@ final class MenuScreen extends JComponent {
         playPicker(g, bx + 40, by + 366, 378, LobbyRoom.HAT_NAMES[hat].toUpperCase(), null, () -> stepHat(-1), () -> stepHat(1));
         playPicker(g, bx + 40, by + 424, 378, COLOR_NAMES[hatColor], hc, () -> hatColor = (hatColor + COLOR_NAMES.length - 1) % COLOR_NAMES.length,
             () -> hatColor = (hatColor + 1) % COLOR_NAMES.length);
-        playField(g, bx + 40, by + 494, 378, 54, name.toString(), editName, true, () -> editName = true);
+        playField(g, bx + 40, by + 494, 378, 54, name.toString(), true, true, () -> { });
     }
 
     /** Your knight on a stone slab (x0, y0 = top-left of its 238 x 308 area): he breathes and sways, his eyes glow and blink, the halo floats and the wings flap. */
@@ -1899,7 +1864,7 @@ final class MenuScreen extends JComponent {
             new Color[]{new Color(255, 205, 90, 110), new Color(255, 205, 90, 0)}));
         g.fill(new Ellipse2D.Double(lcx - 100, ly + 234, 200, 24));
         knight(g, lcx, ly + 86, 7, 1);
-        field(g, lx + 40, ly + 272, lw - 80, name.toString(), true, true, () -> editName = true);
+        field(g, lx + 40, ly + 272, lw - 80, name.toString(), true, true, () -> { });
         g.setFont(Type.hud(17, true, 0.14f));
         Art.textCenter(g, Profile.TITLES[title], lx, lw, ly + 344, GOLD_HI);
 
@@ -2419,24 +2384,4 @@ final class MenuScreen extends JComponent {
         drawFooter(g, false);
     }
 
-    // ------------------------------------------------------------------ helpers
-
-    /**
-     * This computer's address on the local network, to show on the Host tile.
-     * shortcut: takes the first private IPv4 of an active, non-virtual adapter; a PC on several networks may show the wrong one.
-     */
-    static String findLanAddress() {
-        try {
-            for (java.net.NetworkInterface ni : java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())) {
-                String n = (ni.getDisplayName() + " " + ni.getName()).toLowerCase();
-                if (!ni.isUp() || ni.isLoopback() || ni.isVirtual() || n.contains("virtual") || n.contains("vmware") || n.contains("hyper-v")
-                        || n.contains("vethernet") || n.contains("bluetooth")) continue;
-                for (java.net.InetAddress a : java.util.Collections.list(ni.getInetAddresses()))
-                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress()) return a.getHostAddress();
-            }
-        } catch (Exception ignored) {
-            // no network information: fall through
-        }
-        return "localhost";
-    }
 }

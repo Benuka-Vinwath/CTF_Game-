@@ -83,6 +83,12 @@ public class GamePanel extends JPanel {
     private double smokeT;
     private double endT;                                          // seconds since the match ended (see tick)
 
+    // grenades: G held shows where it lands, releasing G (or a right-click) throws it
+    private final List<double[]> booms = new ArrayList<>();       // {x, y, age, team, seed, started}: age < 0 = not yet (see detectEvents)
+    private List<double[]> gView = List.of();                     // interpolated grenades: {id, x, y, team, fuse, height}
+    private int throwRepeat, throwDist;                           // a throw rides in the next few input packets (see requestThrow)
+    private double throwCd;
+
     // lobby: the waiting room, in-game chat and the ready / start buttons
     private final LobbyRoom room = new LobbyRoom();
     private boolean typing;                                       // ENTER opened the chat line; keys go to the text
@@ -158,6 +164,7 @@ public class GamePanel extends JPanel {
                 }
             }
             @Override public void keyReleased(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_G && keys.contains(KeyEvent.VK_G)) requestThrow();
                 keys.remove(e.getKeyCode());
                 if (e.getKeyCode() == KeyEvent.VK_TAB && (last == null || last.winner < 0)) showBoard = false;
             }
@@ -184,6 +191,7 @@ public class GamePanel extends JPanel {
             }
             @Override public void mouseDragged(MouseEvent e) { mouseMoved(e); }
             @Override public void mousePressed(MouseEvent e) {
+                if (e.getButton() == MouseEvent.BUTTON3 && esc == Esc.CLOSED) { mouseMoved(e); requestThrow(); return; }
                 if (e.getButton() != MouseEvent.BUTTON1) return;
                 if (esc != Esc.CLOSED) { // the in-game menu takes every click while it is open
                     for (int i = escHits.size() - 1; i >= 0; i--)
@@ -256,13 +264,17 @@ public class GamePanel extends JPanel {
     /** Mirrors the server's rule, only to grey out the button; the server decides. */
     private boolean lobbyCanStart() {
         Protocol.Lobby l = link.lobby();
-        if (l == null || l.entries().size() < l.minPlayers()) return false;
+        if (l == null || l.entries().isEmpty()) return false;
+        for (Protocol.LobbyEntry e : l.entries()) if (!e.ready()) return false;
+        return true;   // like the server: empty slots get bots when the host starts
+    }
+
+    private boolean teamsFull() {
+        Protocol.Lobby l = link.lobby();
+        if (l == null) return false;
         int[] team = new int[2];
-        for (Protocol.LobbyEntry e : l.entries()) {
-            if (!e.ready()) return false;
-            team[Math.max(0, Math.min(1, e.team()))]++;
-        }
-        return l.minPlayers() <= 1 || (team[0] == l.mode() && team[1] == l.mode());   // both teams full, like the server
+        for (Protocol.LobbyEntry e : l.entries()) team[Math.max(0, Math.min(1, e.team()))]++;
+        return team[0] >= l.mode() && team[1] >= l.mode();
     }
 
     /** Host only: the 1v1 .. 4v4 buttons above START. Others see the chosen size, greyed. */
@@ -495,10 +507,18 @@ public class GamePanel extends JPanel {
         } else if (me == null || !me.alive) shootLatch = false;
 
         sendAcc += dt;
+        throwCd -= dt;
         if (sendAcc >= 1.0 / 30) { // match the server tick rate
             sendAcc = 0;
-            link.sendInput(dx, dy, aim, mouseDown || firedSinceSend);
+            link.sendInput(dx, dy, aim, mouseDown || firedSinceSend, throwRepeat > 0 ? throwDist : 0);
+            if (throwRepeat > 0) throwRepeat--;
             firedSinceSend = false;
+        }
+        for (Iterator<double[]> it = booms.iterator(); it.hasNext(); ) {
+            double[] b = it.next();
+            b[2] += dt;
+            if (b[5] == 0 && b[2] >= 0) { b[5] = 1; boomEffects(b); }
+            if (b[2] > Blast.SCORCH_LIFE) it.remove();
         }
 
         // where everyone is drawn this frame, and whether they are walking
@@ -647,6 +667,12 @@ public class GamePanel extends JPanel {
                 if (a.winner >= 0) rememberMatch(a);
             }
             if (b.phase == Snapshot.PLAYING) { roundStartLeft = b.timeLeftSec; mvpId = -1; }
+        }
+        for (double[] ga : a.grenades) {   // a grenade that was about to burst and is gone has exploded
+            boolean still = false;
+            for (double[] gb : b.grenades) still |= gb[0] == ga[0];
+            if (!still && ga[4] < 0.4)   // starts when the delayed view reaches this snapshot: the grenade vanishes into its own blast
+                booms.add(new double[]{ga[1], ga[2], -INTERP_DELAY_NS / 1e9, ga[3], rnd.nextInt(), 0});
         }
         if (a.phase == Snapshot.LOBBY && b.phase == Snapshot.LOBBY) {
             if (a.countdown > 0 && b.countdown <= 0) say("Countdown cancelled", new Color(255, 130, 100));
@@ -825,6 +851,46 @@ public class GamePanel extends JPanel {
         if (notices.size() > 2) notices.remove(0);
     }
 
+    // ---------- grenades ----------
+
+    /**
+     * Throw toward the mouse, as far as the cursor (30 px .. GRENADE_RANGE). UDP may lose a packet, so the throw rides in
+     * the next 4 input packets; the server's 3 s cooldown makes the repeats count once.
+     */
+    private void requestThrow() {
+        Snapshot.P me = last == null ? null : find(last, myId);
+        if (me == null || !me.alive || last.winner >= 0 || !predReady || throwCd > 0) return;
+        if (me.grenades <= 0) { say("No grenades left: find the armory crate", new Color(255, 170, 110)); return; }
+        throwDist = (int) Math.max(30, Math.min(MapData.GRENADE_RANGE, Math.hypot(mouseX - pred[0], mouseY - pred[1])));
+        throwRepeat = 4;
+        throwCd = MapData.THROW_COOLDOWN;
+        sendAcc = 1;   // send it this very frame
+        Sfx.play("throw");
+    }
+
+    /** The moment a blast becomes visible: sparks, debris, smoke, a ripple, the boom, and a shake that fades with distance. */
+    private void boomEffects(double[] b) {
+        double x = b[0], y = b[1];
+        for (int i = 0; i < 46; i++) {   // hot sparks
+            double a = rnd.nextDouble() * Math.PI * 2, sp = 180 + rnd.nextDouble() * 320;
+            addP(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 0.35 + rnd.nextDouble() * 0.45,
+                rnd.nextBoolean() ? new Color(255, 220, 120) : new Color(255, 140, 40), 3 + rnd.nextInt(3));
+        }
+        for (int i = 0; i < 14; i++) {   // dark debris
+            double a = rnd.nextDouble() * Math.PI * 2, sp = 90 + rnd.nextDouble() * 160;
+            addP(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 0.6 + rnd.nextDouble() * 0.5, new Color(50, 40, 34), 4 + rnd.nextInt(3));
+        }
+        for (int i = 0; i < 16; i++) {   // smoke that drifts up and spreads
+            double a = rnd.nextDouble() * Math.PI * 2, d = rnd.nextDouble() * 40;
+            addSoft(x + Math.cos(a) * d, y + Math.sin(a) * d, Math.cos(a) * 25, -30 - rnd.nextDouble() * 40,
+                1.2 + rnd.nextDouble() * 0.8, new Color(70 + rnd.nextInt(30), 64, 60), 46 + rnd.nextInt(30));
+        }
+        ring(x, y, -1, 0.5, MapData.BLAST_R * 1.2);
+        double d = predReady ? Math.hypot(pred[0] - x, pred[1] - y) : 600;
+        shake = Math.max(shake, 18 * Math.max(0, 1 - d / 700));
+        Sfx.play("boom");
+    }
+
     private void ring(double x, double y, int team, double life, double radius) {
         if (rings.size() < 24) rings.add(new double[]{x, y, team, 0, life, radius});
     }
@@ -867,6 +933,21 @@ public class GamePanel extends JPanel {
             if (pa == null) pa = pb;
             out.put(pb.id, new double[]{pa.x + (pb.x - pa.x) * t, pa.y + (pb.y - pa.y) * t});
         }
+        List<double[]> gs = new ArrayList<>();   // grenades, on the same delayed clock as the players
+        double span = Math.max(1e-3, (b.arrivedNs - a.arrivedNs) / 1e9);
+        for (double[] gb : b.grenades) {
+            double[] ga = gb;
+            for (double[] c : a.grenades) if (c[0] == gb[0]) ga = c;
+            double speed = Math.hypot(gb[1] - ga[1], gb[2] - ga[2]) / span;
+            gs.add(new double[]{gb[0], ga[1] + (gb[1] - ga[1]) * t, ga[2] + (gb[2] - ga[2]) * t, gb[3],
+                ga[4] + (gb[4] - ga[4]) * t, Math.min(30, speed * 0.045)});   // the faster it flies, the higher it is
+        }
+        for (double[] ga : a.grenades) {   // burst between a and b: still on the ground until the view reaches b, when its blast starts
+            boolean inB = false;
+            for (double[] gb : b.grenades) inB |= gb[0] == ga[0];
+            if (!inB && t < 1) gs.add(new double[]{ga[0], ga[1], ga[2], ga[3], Math.max(0, ga[4] - t * span), 0});
+        }
+        gView = gs;
         return out;
     }
 
@@ -919,6 +1000,7 @@ public class GamePanel extends JPanel {
         boolean lobby = s.phase == Snapshot.LOBBY;
         if (lobby) {
             room.drawWorld(g, vX0(), vY0(), vW(), vH(), time, fx);
+            drawBlastGround(g);
             double[] mvpAt = mvpId >= 0 ? renderPos.get(mvpId) : null;   // last match's MVP stands in a gold glow
             if (mvpAt != null) Art.glow(g, GOLD, mvpAt[0], mvpAt[1] + 6, 80, (float) (0.55 + 0.2 * Math.sin(time * 2.6)));
             drawPlayers(g, s);
@@ -927,10 +1009,14 @@ public class GamePanel extends JPanel {
             drawBases(g);   // the walls are part of the cached backdrop (Scenery.buildBack), not redrawn every frame
             drawTorches(g);
             Art.tent(g, MapData.TENT_X, MapData.TENT_Y, s.tentCooldown <= 0 ? 1.0 : 1.0 - s.tentCooldown / MapData.TENT_RECHARGE, time, fx);
+            Blast.crate(g, MapData.ARMORY_X, MapData.ARMORY_Y, 1.0 - s.armoryCooldown / MapData.ARMORY_RECHARGE, time, fx);
+            drawBlastGround(g);
             drawEntities(g, s);
         }
         for (double[] b : s.bullets) if (!hidden.contains(b)) drawBullet(g, b[0], b[1], bulletAngle(b), teamOf(b));
         for (double[] gh : ghosts) drawBullet(g, gh[7], gh[8], Math.atan2(gh[3], gh[2]), (int) gh[4]);
+        for (double[] gr : gView) Blast.grenade(g, gr[1], gr[2], gr[5], (int) gr[3], gr[4], time * 9 * (gr[5] > 1 ? 1 : 0) + gr[0], time, fx);
+        if (keys.contains(KeyEvent.VK_G) && predReady && !typing) drawThrowAim(g);
         for (Particle p : parts) {
             Composite old = g.getComposite();
             float a = (float) Math.max(0, Math.min(1, p.life / p.max));
@@ -942,6 +1028,7 @@ public class GamePanel extends JPanel {
             } else g.fill(new Ellipse2D.Double(p.x - p.size / 2.0, p.y - p.size / 2.0, p.size, p.size));
             g.setComposite(old);
         }
+        for (double[] b : booms) Blast.fireball(g, b[0], b[1], b[2], (long) b[4], fx);   // over its own smoke, which shows as the fire fades
         for (double[] r : rings) { // expanding ground ripples
             double k = r[3] / r[4], rad = r[5] * (1 - (1 - k) * (1 - k));
             Color c = r[2] < 0 ? Color.WHITE : Art.FX[(int) r[2]];
@@ -1118,7 +1205,8 @@ public class GamePanel extends JPanel {
             startBtn.setRect(bx - bw - 12, by, bw, bh);
             boolean ok = lobbyCanStart() && s.countdown <= 0;
             lobbyButton(g, startBtn, ok ? new Color(255, 120, 70) : new Color(110, 105, 135), hoverStart && ok,
-                s.countdown > 0 ? "STARTING..." : "START MATCH", ok ? "everyone is ready" : s.countdown > 0 ? "get ready" : "full teams, all ready");
+                s.countdown > 0 ? "STARTING..." : "START MATCH", s.countdown > 0 ? "get ready" : !ok ? "everyone ready first"
+                    : teamsFull() ? "everyone is ready" : "bots fill empty slots");
         } else startBtn.setRect(0, 0, 0, 0);
         drawModePicker(g, bx - bw - 12, by - 50, bw * 2 + 12);
 
@@ -1218,6 +1306,35 @@ public class GamePanel extends JPanel {
             if (fx) Art.glow(g, Art.FX[t], xy[0] + 8, xy[1] - 58, 42, 0.5f);
             Art.flag(g, xy[0] + 5, xy[1] - 58, t, time);
         }
+    }
+
+    /** On the ground, under the fighters: scorch marks, and the blast-radius warning of grenades about to burst. */
+    private void drawBlastGround(Graphics2D g) {
+        for (double[] b : booms) Blast.scorch(g, b[0], b[1], b[2], (long) b[4]);
+        for (double[] gr : gView) Blast.warning(g, gr[1], gr[2], gr[4], time);
+    }
+
+    /** While G is held: a dotted arc to where the grenade will land, and its blast radius there. */
+    private void drawThrowAim(Graphics2D g) {
+        double ang = Math.atan2(mouseY - pred[1], mouseX - pred[0]);
+        double d = Math.max(30, Math.min(MapData.GRENADE_RANGE, Math.hypot(mouseX - pred[0], mouseY - pred[1])));
+        double tx = pred[0] + Math.cos(ang) * d, ty = pred[1] + Math.sin(ang) * d;
+        Snapshot.P me = last == null ? null : find(last, myId);
+        boolean can = me != null && me.grenades > 0 && throwCd <= 0;
+        Color c = can ? new Color(255, 205, 90) : new Color(170, 165, 190);
+        g.setStroke(new BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 10, new float[]{2, 8}, (float) (10 - time * 30 % 10)));   // dots run toward the target; Java refuses a negative phase
+        g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 200));
+        Path2D arc = new Path2D.Double();   // a lob: the arc bulges upward on screen
+        arc.moveTo(pred[0], pred[1] - 10);
+        arc.quadTo((pred[0] + tx) / 2, (pred[1] + ty) / 2 - d * 0.35, tx, ty);
+        g.draw(arc);
+        double r = MapData.BLAST_R;
+        g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 10, new float[]{8, 6}, (float) (time * 20)));
+        g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 150));
+        g.draw(new Ellipse2D.Double(tx - r, ty - r, r * 2, r * 2));
+        g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 30));
+        g.fill(new Ellipse2D.Double(tx - r, ty - r, r * 2, r * 2));
+        g.setStroke(new BasicStroke(1));
     }
 
     private void drawPlayers(Graphics2D g, Snapshot s) {
@@ -1454,12 +1571,34 @@ public class GamePanel extends JPanel {
 
         // bottom left: compact controls guide
         g.setFont(Type.ui(11.5f, false));
-        if (!typing) Art.textCenter(g, "WASD move   MOUSE aim/fire   TAB scores   ENTER chat   ESC menu   F11 fullscreen   M music " + (Music.isOn() ? "on" : "off") + "   F fx " + (fx ? "on" : "off") + "   V shake " + (shakeOn ? "on" : "off") + "   L lag",
+        if (!typing) Art.textCenter(g, "WASD move   MOUSE aim/fire   G / R-CLICK grenade   TAB scores   ENTER chat   ESC menu   F11 fullscreen   M music " + (Music.isOn() ? "on" : "off") + "   F fx " + (fx ? "on" : "off") + "   V shake " + (shakeOn ? "on" : "off") + "   L lag",
             x0, w, y0 + h - 10, new Color(235, 232, 255, 200));
+        drawGrenadeHud(g, me, cx, y0 + h - 30);
 
         drawFeed(g, x0, y0, h);
         drawNotices(g, cx, top, PH);
         drawStatusBanner(g, s, me, mt, cx, y0, h);
+    }
+
+    /** Bottom centre: your grenades as bomb icons (greyed when used), a cooldown sweep, and the G key. bottom = the plate's bottom edge. */
+    private void drawGrenadeHud(Graphics2D g, Snapshot.P me, double cx, double bottom) {
+        if (me == null) return;
+        double pw = 146, ph = 44, px = cx - pw / 2, py = bottom - ph;
+        Art.plate(g, px, py, pw, ph, 10, me.grenades > 0 ? GOLD : new Color(150, 140, 170), time, fx);
+        for (int i = 0; i < MapData.GRENADES; i++) Blast.icon(g, px + 30 + i * 38, py + ph / 2 + 4, 30, i < me.grenades, time);
+        double kx = px + pw - 30, ky = py + ph / 2;
+        if (throwCd > 0) {   // the cooldown sweeps around the key
+            g.setColor(new Color(255, 205, 90, 160));
+            g.fill(new Arc2D.Double(kx - 14, ky - 14, 28, 28, 90, 360 * throwCd / MapData.THROW_COOLDOWN, Arc2D.PIE));
+        }
+        g.setColor(new Color(20, 14, 32, 220));
+        g.fill(new RoundRectangle2D.Double(kx - 11, ky - 11, 22, 22, 6, 6));
+        g.setColor(me.grenades > 0 && throwCd <= 0 ? GOLD : new Color(140, 135, 160));
+        g.setStroke(new BasicStroke(1.4f));
+        g.draw(new RoundRectangle2D.Double(kx - 11, ky - 11, 22, 22, 6, 6));
+        g.setStroke(new BasicStroke(1));
+        g.setFont(Type.ui(13, true));
+        Art.textCenter(g, "G", kx - 11, 22, ky + 5, Color.WHITE);
     }
 
     /** Event feed, bottom left: joins, eliminations, flags and chat. */

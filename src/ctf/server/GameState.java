@@ -50,6 +50,9 @@ public class GameState {
     private final Map<Integer, Player> players = new LinkedHashMap<>();
     private final Flag[] flags = {new Flag(0), new Flag(1)};
     private final List<double[]> bullets = new ArrayList<>();   // x, y, vx, vy, team, shooterId
+    private final List<double[]> grenades = new ArrayList<>();  // x, y, vx, vy, team, ownerId, fuse left, id
+    private double armoryCooldown;
+    private long nextGrenadeId = 1;
     private final int[] score = new int[2];
 
     private Phase phase = Phase.LOBBY;
@@ -90,9 +93,10 @@ public class GameState {
 
     /** hat and hatColor were chosen in the main menu; they are wrapped into range like setLook does. */
     public synchronized Player addPlayer(String name, int team, int hat, int hatColor, int level, int title, Conn conn) {
-        if (players.size() >= 2 * mode) return null;   // both teams full at this match size (1v1 holds 2): refuse, lobby or mid-match
+        if (humans() >= 2 * mode) return null;   // every slot has a human (1v1 holds 2): refuse, lobby or mid-match
         if (team != 0 && team != 1) team = teamSize(0) <= teamSize(1) ? 0 : 1;   // auto-balance
-        if (teamSize(team) >= mode) team = 1 - team;   // asked for a full team: the other one has room
+        if (teamSize(team) >= mode && botOn(team) == null) team = 1 - team;   // asked for a team full of humans: the other one
+        if (teamSize(team) >= mode) remove(botOn(team));   // a human takes a bot's place
         Player p = new Player(ids.getAsInt(), name, team, rng.nextInt(Integer.MAX_VALUE), conn);
         p.hat = Math.floorMod(hat, LobbyMap.HATS);
         p.hatColor = Math.floorMod(hatColor, LobbyMap.HAT_COLORS);
@@ -114,13 +118,68 @@ public class GameState {
     }
 
     public synchronized void removePlayer(int id) {
-        Player p = players.remove(id);
+        Player p = players.get(id);
         if (p == null) return;
-        dropFlagCarriedBy(p);
-        log(p.name + " left");
-        if (players.isEmpty()) resetToLobby();
+        remove(p);
+        if (humans() == 0) {   // bots never play on their own: the last human leaving clears the room
+            players.clear();
+            resetToLobby();
+        }
         checkCountdown();
         broadcastLobby();
+    }
+
+    private void remove(Player p) {
+        players.remove(p.id);
+        dropFlagCarriedBy(p);
+        log(p.name + " left");
+    }
+
+    // ------------------------------------------------------------------ bots
+
+    /** A bot joins a team that has a free slot; its style comes from its slot (Bot.ORDER). Null if the team is full. */
+    synchronized Player addBot(int team) {
+        if ((team != 0 && team != 1) || teamSize(team) >= mode) return null;
+        Bot.Type type = Bot.ORDER[teamSize(team) % Bot.ORDER.length];
+        String base = "Bot_" + type.name().charAt(0) + type.name().substring(1).toLowerCase();
+        String name = base;
+        for (int n = 2; nameTaken(name); n++) name = base + n;
+        Player p = new Player(ids.getAsInt(), name, team, rng.nextInt(Integer.MAX_VALUE), line -> { });   // nobody to send lines to
+        p.bot = new Bot(type, rng);
+        p.ready = true;
+        p.hat = BOT_HATS[type.ordinal()];   // each style wears its own hat, so players can tell them apart
+        p.hatColor = type.ordinal() + 1;
+        p.level = 30;
+        players.put(p.id, p);
+        if (phase == Phase.LOBBY) placeInLobby(p); else spawn(p);
+        log(name + " joined " + TEAM_NAMES[team]);
+        return p;
+    }
+
+    private static final int[] BOT_HATS = {3, 1, 5};   // horns, crown, wings (see LobbyRoom.HAT_NAMES)
+
+    /** Empty slots get bots, so the host can start with fewer players than the match size. */
+    private void fillWithBots() {
+        for (int t = 0; t < 2; t++) while (teamSize(t) < mode) addBot(t);
+    }
+
+    private boolean nameTaken(String name) {
+        for (Player p : players.values()) if (p.name.equals(name)) return true;
+        return false;
+    }
+
+    private Player botOn(int team) {
+        Player last = null;   // the most recently added bot leaves first
+        for (Player p : players.values()) if (p.bot != null && p.team == team) last = p;
+        return last;
+    }
+
+    private int humans() { return humansOn(0) + humansOn(1); }
+
+    private int humansOn(int team) {
+        int n = 0;
+        for (Player p : players.values()) if (p.bot == null && p.team == team) n++;
+        return n;
     }
 
     public synchronized void setReady(int id, boolean ready) {
@@ -141,15 +200,20 @@ public class GameState {
 
     /** Host only: the match size (1 = 1v1 ... 4 = 4v4). Refused if a team already has more players than that. */
     public synchronized void setMode(int id, int n) {
-        if (id != hostId() || phase != Phase.LOBBY || n < 1 || n > MAX_TEAM || n < teamSize(0) || n < teamSize(1)) return;
+        if (id != hostId() || phase != Phase.LOBBY || n < 1 || n > MAX_TEAM || n < humansOn(0) || n < humansOn(1)) return;
         mode = n;
+        for (int t = 0; t < 2; t++) while (teamSize(t) > mode) remove(botOn(t));   // a smaller match: extra bots leave
         checkCountdown();
         broadcastLobby();
     }
 
-    /** The host pressed START: begin the countdown if everyone is ready. Anyone else is ignored. */
+    /** The host pressed START: once every human is ready, bots fill the empty slots and the countdown begins. Anyone else is ignored. */
     public synchronized void begin(int id) {
-        if (id != hostId() || !canStart() || countdown > 0) return;
+        if (id != hostId() || phase != Phase.LOBBY || countdown > 0) return;
+        for (Player p : players.values()) if (!p.ready) return;
+        fillWithBots();
+        broadcastLobby();
+        if (!canStart()) return;
         countdown = COUNTDOWN_SEC;
         log("Countdown started by " + players.get(id).name);
     }
@@ -170,14 +234,16 @@ public class GameState {
         for (Player q : players.values()) q.conn.send(msg);
     }
 
-    public synchronized int playerCount() { return players.size(); }
+    /** Humans only: bots never keep a room open and always make way for a joining human. */
+    public synchronized int playerCount() { return humans(); }
 
-    /** True while a join would be accepted: both teams are not yet full at the current match size. */
-    public synchronized boolean hasRoom() { return players.size() < 2 * mode; }
+    /** True while a join would be accepted: some slot is empty or held by a bot. */
+    public synchronized boolean hasRoom() { return humans() < 2 * mode; }
 
-    /** The first player still connected is the host; when they leave, the next one takes over. */
+    /** The first human still connected is the host; when they leave, the next one takes over. A bot never hosts. */
     private int hostId() {
-        return players.isEmpty() ? -1 : players.keySet().iterator().next();
+        for (Player p : players.values()) if (p.bot == null) return p.id;
+        return -1;
     }
 
     private boolean canStart() {
@@ -218,6 +284,8 @@ public class GameState {
         endElapsed = 0;
         countdown = 0;
         bullets.clear();
+        grenades.clear();
+        armoryCooldown = 0;
         for (Flag f : flags) f.returnToBase();
         for (Player p : players.values()) {
             p.tags = p.captures = p.deaths = 0;
@@ -245,6 +313,7 @@ public class GameState {
         p.dy = in.dy();
         p.aim = in.aim();
         if (in.shoot()) p.shootLatch = true;
+        if (in.throwDist() > 0) p.throwDist = in.throwDist();   // clients repeat a throw in a few packets; the cooldown makes it count once
         p.inputAge = 0;
     }
 
@@ -273,6 +342,7 @@ public class GameState {
         boolean changed = false;
         for (Player p : players.values()) {
             p.fireCd -= DT;
+            p.throwCd -= DT;
             p.inputAge += DT;
             move(p, LobbyMap.WALLS);
             int pad = LobbyMap.padAt(p.x, p.y);
@@ -282,6 +352,8 @@ public class GameState {
             }
         }
         shoot();
+        throwGrenades(true);
+        moveGrenades(LobbyMap.WALLS, false);   // practice throws: they bounce and burst, but nobody is hurt in the lobby
         if (moveBullets()) changed = true;
         if (changed) broadcastLobby();
         if (countdown > 0) {
@@ -294,9 +366,12 @@ public class GameState {
         timeLeft = Math.max(0, timeLeft - DT);
         tentCooldown = Math.max(0, tentCooldown - DT);
 
+        armoryCooldown = Math.max(0, armoryCooldown - DT);
+        for (Player p : players.values()) if (p.bot != null && p.alive) p.bot.think(p, players, flags, bullets, grenades, tentCooldown);
         for (Player p : players.values()) {
             p.shieldSec = Math.max(0, p.shieldSec - DT);
             p.fireCd -= DT;
+            p.throwCd -= DT;
             p.inputAge += DT;
             if (!p.alive) {
                 p.shootLatch = false;
@@ -307,7 +382,10 @@ public class GameState {
             move(p, MapData.WALLS);
         }
         tent();
+        armory();
         shoot();
+        throwGrenades(false);
+        moveGrenades(MapData.WALLS, true);
         moveBullets();
         updateFlags();
         if (phase == Phase.PLAYING && timeLeft <= 0) endByTimer();
@@ -343,6 +421,76 @@ public class GameState {
             p.fireCd = MapData.FIRE_INTERVAL;
             bullets.add(new double[]{p.x, p.y, Math.cos(p.aim) * MapData.BULLET_SPEED,
                     Math.sin(p.aim) * MapData.BULLET_SPEED, p.team, p.id});
+        }
+    }
+
+    // ------------------------------------------------------------------ grenades
+
+    /** A requested throw becomes a grenade if the player has one and the cooldown is over. The lobby does not use up ammo. */
+    private void throwGrenades(boolean practice) {
+        for (Player p : players.values()) {
+            double d = p.throwDist;
+            p.throwDist = 0;
+            if (d <= 0 || !p.alive || p.throwCd > 0 || p.grenades <= 0) continue;
+            d = Math.max(30, Math.min(d, MapData.GRENADE_RANGE));
+            double v0 = Math.sqrt(2 * GRENADE_DECEL * d);   // slows down evenly and comes to rest d px away
+            grenades.add(new double[]{p.x, p.y, Math.cos(p.aim) * v0, Math.sin(p.aim) * v0, p.team, p.id,
+                    MapData.GRENADE_FUSE, nextGrenadeId++});
+            p.throwCd = MapData.THROW_COOLDOWN;
+            if (!practice) p.grenades--;
+        }
+    }
+
+    /** Flight with even slowdown, a soft bounce off walls and the arena edge, then the blast when the fuse runs out. */
+    /** px/s per second: the longest throw (GRENADE_RANGE) comes to rest after GRENADE_TRAVEL seconds. */
+    static final double GRENADE_DECEL = 2 * MapData.GRENADE_RANGE / (MapData.GRENADE_TRAVEL * MapData.GRENADE_TRAVEL);
+
+    private void moveGrenades(double[][] walls, boolean hurts) {
+        for (Iterator<double[]> it = grenades.iterator(); it.hasNext(); ) {
+            double[] gr = it.next();
+            double v = Math.hypot(gr[2], gr[3]);
+            if (v > 0) {
+                double k = Math.max(0, v - GRENADE_DECEL * DT) / v;
+                gr[2] *= k;
+                gr[3] *= k;
+            }
+            double nx = gr[0] + gr[2] * DT, ny = gr[1] + gr[3] * DT;
+            if (solid(walls, nx, gr[1])) { gr[2] *= -0.5; nx = gr[0]; }
+            if (solid(walls, nx, ny)) { gr[3] *= -0.5; ny = gr[1]; }
+            gr[0] = nx;
+            gr[1] = ny;
+            gr[6] -= DT;
+            if (gr[6] > 0) continue;
+            it.remove();
+            if (hurts) explode(gr);
+        }
+    }
+
+    private static boolean solid(double[][] walls, double x, double y) {
+        return x < 6 || y < 6 || x > MapData.W - 6 || y > MapData.H - 6 || inWall(walls, x, y);
+    }
+
+    /** Every enemy within BLAST_R that the blast can reach (no wall in between) is eliminated, unless shielded. */
+    private void explode(double[] gr) {
+        int team = (int) gr[4];
+        for (Player p : new ArrayList<>(players.values())) {
+            if (!p.alive || p.team == team) continue;
+            if (Math.hypot(p.x - gr[0], p.y - gr[1]) > MapData.BLAST_R) continue;
+            if (!Bot.Nav.clearShot(gr[0], gr[1], p.x, p.y)) continue;
+            if (p.shieldSec <= 0) eliminate(p, (int) gr[5]);
+        }
+    }
+
+    /** The armory crate gives back one grenade to a player who is short, then recharges. */
+    private void armory() {
+        if (armoryCooldown > 0) return;
+        for (Player p : players.values()) {
+            if (p.alive && p.grenades < MapData.GRENADES
+                    && Math.hypot(p.x - MapData.ARMORY_X, p.y - MapData.ARMORY_Y) <= MapData.ARMORY_R) {
+                p.grenades++;
+                armoryCooldown = MapData.ARMORY_RECHARGE;
+                return;
+            }
         }
     }
 
@@ -459,6 +607,8 @@ public class GameState {
         winner = winningTeam;
         endElapsed = 0;
         bullets.clear();
+        grenades.clear();
+        armoryCooldown = 0;
         for (Player p : players.values()) { p.dx = p.dy = 0; p.shootLatch = false; p.wantsAgain = false; p.ready = false; }
         broadcast("GAMEOVER " + winner + " " + score[0] + " " + score[1]);
         broadcastStats();
@@ -472,9 +622,11 @@ public class GameState {
         countdown = 0;
         timeLeft = ROUND_SEC;
         bullets.clear();
+        grenades.clear();
+        armoryCooldown = 0;
         for (Flag f : flags) f.returnToBase();
         for (Player p : players.values()) {
-            p.ready = false;
+            p.ready = p.bot != null;   // bots are always ready for the next match
             p.alive = true;
             p.dx = p.dy = 0;
             p.shieldSec = 0;
@@ -489,11 +641,12 @@ public class GameState {
         double[] at = LobbyMap.spawn(p.id);
         p.x = at[0];
         p.y = at[1];
+        p.grenades = MapData.GRENADES;   // to practise throwing in the lobby
     }
 
-    private boolean allWantAgain() {
-        if (players.isEmpty()) return false;
-        for (Player p : players.values()) if (!p.wantsAgain) return false;
+    private boolean allWantAgain() {   // the humans' vote; bots always agree
+        if (humans() == 0) return false;
+        for (Player p : players.values()) if (p.bot == null && !p.wantsAgain) return false;
         return true;
     }
 
@@ -502,6 +655,8 @@ public class GameState {
         p.y = MapData.BASES[p.team][1];
         p.alive = true;
         p.respawnIn = 0;
+        p.grenades = MapData.GRENADES;   // a fresh pair every life
+        p.throwCd = 0;
     }
 
     private void dropFlagCarriedBy(Player p) {
@@ -552,6 +707,7 @@ public class GameState {
             q.aim = p.aim;
             q.alive = p.alive;
             q.shieldSec = p.shieldSec;
+            q.grenades = p.grenades;
             s.players[i++] = q;
         }
         s.bullets = new double[bullets.size()][];
@@ -559,6 +715,12 @@ public class GameState {
             double[] b = bullets.get(k);
             s.bullets[k] = new double[]{b[0], b[1], b[4]};
         }
+        s.grenades = new double[grenades.size()][];
+        for (int k = 0; k < s.grenades.length; k++) {
+            double[] gr = grenades.get(k);
+            s.grenades[k] = new double[]{gr[7], gr[0], gr[1], gr[4], gr[6]};
+        }
+        s.armoryCooldown = armoryCooldown;
         return Protocol.encodeSnapshot(s);
     }
 
@@ -610,6 +772,14 @@ public class GameState {
     synchronized double countdown() { return countdown; }
 
     synchronized int mode() { return mode; }
+
+    synchronized int grenadeCount() { return grenades.size(); }
+
+    synchronized List<Player> bots() {
+        List<Player> out = new ArrayList<>();
+        for (Player p : players.values()) if (p.bot != null) out.add(p);
+        return out;
+    }
 
     synchronized void setTimeLeft(double seconds) { timeLeft = seconds; }
 }
