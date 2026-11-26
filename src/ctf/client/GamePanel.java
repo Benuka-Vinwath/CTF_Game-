@@ -184,7 +184,7 @@ public class GamePanel extends JPanel {
                     boolean overMode = false;
                     if (amHost()) for (Rectangle2D.Double r : modeBtns) overMode |= r.contains(mouseX, mouseY);
                     overMode |= leaveBtn.contains(mouseX, mouseY);
-                    setCursor(Cursor.getPredefinedCursor(hoverReady || hoverStart || overMode ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                    setCursor(hoverReady || hoverStart || overMode ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : NO_CURSOR);
                 } else if (last != null && last.winner >= 0) {
                     setCursor(Cursor.getPredefinedCursor(backBtn.contains(mouseX, mouseY) ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                 }
@@ -1074,6 +1074,7 @@ public class GamePanel extends JPanel {
             return;
         }
         Snapshot s = last;
+        aimCursor(s);
         AffineTransform hudBase = g.getTransform();
         g.translate(shakeX, shakeY); // names ride with the shaking battlefield, the HUD does not
         drawNames(g, s);
@@ -1082,6 +1083,7 @@ public class GamePanel extends JPanel {
         if (s.phase == Snapshot.LOBBY) {
             drawLobbyHud(g, s);
             drawChatBox(g);
+            drawCrosshair(g);
             drawEscMenu(g);
             g.dispose();
             return;
@@ -1095,6 +1097,7 @@ public class GamePanel extends JPanel {
                 g.setTransform(hudBase);
             }
             drawChatBox(g);
+            drawCrosshair(g);
         }
         drawEscMenu(g);
         g.dispose();
@@ -1512,6 +1515,46 @@ public class GamePanel extends JPanel {
     // ---------- HUD ----------
 
     private static final Color GOLD = new Color(255, 205, 90);
+
+    /** An invisible mouse pointer: while aiming, the game draws its own crosshair instead (drawCrosshair). */
+    private static final Cursor NO_CURSOR = noCursor();
+
+    private static Cursor noCursor() {
+        try {
+            return Toolkit.getDefaultToolkit().createCustomCursor(new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB), new Point(), "none");
+        } catch (HeadlessException | IndexOutOfBoundsException e) {
+            return Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR);   // no screen (tests): any cursor will do
+        }
+    }
+
+    /** Every frame: hide the pointer while aiming (lobby or match, no menu open); the arrow comes back for menus and results. */
+    private void aimCursor(Snapshot s) {
+        boolean aiming = esc == Esc.CLOSED && s.winner < 0 && (s.phase == Snapshot.PLAYING || s.phase == Snapshot.LOBBY);
+        Cursor c = getCursor();
+        if (aiming && c != NO_CURSOR && (c.getType() != Cursor.HAND_CURSOR || s.phase != Snapshot.LOBBY)) setCursor(NO_CURSOR);   // a hand over a lobby button stays
+        else if (!aiming && c == NO_CURSOR) setCursor(Cursor.getDefaultCursor());
+    }
+
+    /** Gold ring with four ticks and a dot, outlined dark so it shows on grass, stone and snow alike. */
+    private void drawCrosshair(Graphics2D g) {
+        if (getCursor() != NO_CURSOR) return;
+        double x = mouseX, y = mouseY, r = 9;
+        Shape ring = new Ellipse2D.Double(x - r, y - r, 2 * r, 2 * r);
+        Path2D ticks = new Path2D.Double();
+        for (int i = 0; i < 4; i++) {
+            double dx = Math.cos(i * Math.PI / 2), dy = Math.sin(i * Math.PI / 2);
+            ticks.moveTo(x + dx * (r - 3), y + dy * (r - 3));
+            ticks.lineTo(x + dx * (r + 6), y + dy * (r + 6));
+        }
+        g.setStroke(new BasicStroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(new Color(0, 0, 0, 150));
+        g.draw(ring); g.draw(ticks);
+        g.fill(new Ellipse2D.Double(x - 3, y - 3, 6, 6));
+        g.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(GOLD);
+        g.draw(ring); g.draw(ticks);
+        g.fill(new Ellipse2D.Double(x - 1.6, y - 1.6, 3.2, 3.2));
+    }
 
     private void drawHud(Graphics2D g, Snapshot s) {
         Snapshot.P me = find(s, myId);
