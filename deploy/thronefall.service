@@ -6,8 +6,10 @@ Wants=network-online.target
 [Service]
 User=ubuntu
 WorkingDirectory=/home/ubuntu/thronefall
+# DB_URL, DB_USER, DB_PASSWORD for the online profiles (Supabase); root-only file, never in git. "-" = optional
+EnvironmentFile=-/etc/thronefall.env
 # 2 = a match needs two full teams to start; 256 MB is plenty and fits the free 1 GB machines
-ExecStart=/usr/bin/java -Xmx256m -cp /home/ubuntu/thronefall/out ctf.server.GameServer 5000 2
+ExecStart=/usr/bin/java -Xmx256m -cp /home/ubuntu/thronefall/out:/home/ubuntu/thronefall/lib/* ctf.server.GameServer 5000 2
 Restart=always
 RestartSec=3
 

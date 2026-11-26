@@ -614,6 +614,20 @@ public class GameState {
         broadcastStats();
         broadcastLobby();   // everyone shows as not voted yet
         log(TEAM_NAMES[winner] + " wins " + score[0] + "-" + score[1]);
+        saveOnline();
+    }
+
+    /** Hands the result to the online database (if any); it saves in the background. MVP: same ranking as the client. */
+    private void saveOnline() {
+        Player mvp = null;
+        for (Player p : players.values())
+            if (mvp == null || p.score() > mvp.score() || p.score() == mvp.score() && (p.captures > mvp.captures
+                    || p.captures == mvp.captures && (p.tags > mvp.tags || p.tags == mvp.tags && p.deaths < mvp.deaths)))
+                mvp = p;
+        List<Db.Row> rows = new ArrayList<>();
+        for (Player p : players.values())
+            rows.add(new Db.Row(p.bot == null ? p.key : null, p.name, p.team, p.captures, p.tags, p.deaths, p.score(), p == mvp, p.team == winner));
+        Db.saveMatch(mode, winner, score[0], score[1], (int) (ROUND_SEC - timeLeft), rows);
     }
 
     private void resetToLobby() {

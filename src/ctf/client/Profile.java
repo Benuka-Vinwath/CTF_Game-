@@ -163,19 +163,12 @@ final class Profile {
 
     // ------------------------------------------------------------------ XP and levels
 
-    /** XP needed to go from level n to n+1: 200, 250, 300 ... */
-    static int need(int n) { return 150 + 50 * n; }
+    static int need(int n) { return ctf.common.Progress.need(n); }
+    static int[] levelOf(int xp) { return ctf.common.Progress.levelOf(xp); }
+    static int xpFor(boolean won, int captures, int tags, boolean mvp) { return ctf.common.Progress.xpFor(won, captures, tags, mvp); }
 
-    /** {level, XP into that level, XP needed for the next} */
-    static int[] levelOf(int xp) {
-        int lv = 1;
-        while (xp >= need(lv)) { xp -= need(lv); lv++; }
-        return new int[]{lv, xp, need(lv)};
-    }
-
-    static int xpFor(boolean won, int captures, int tags, boolean mvp) {
-        return (won ? 100 : 40) + 20 * captures + 5 * tags + (mvp ? 50 : 0);
-    }
+    /** This install's secret player key (a random UUID made on first launch); the online server saves your profile under it. */
+    String key() { return id; }
 
     // ------------------------------------------------------------------ recording a match
 

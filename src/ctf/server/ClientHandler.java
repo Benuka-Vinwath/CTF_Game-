@@ -20,7 +20,7 @@ import java.util.concurrent.LinkedBlockingQueue;
  * slow client's network. A client that stops reading entirely (queue over MAX_QUEUE) is dropped.
  *
  * Commands (client to server): ROOMS (allowed before HELLO: the public room list),
- * HELLO team name hat colour level title version [QUICK | CREATE:mode:public|private | JOIN:code],
+ * HELLO team name hat colour level title version [QUICK | CREATE:mode:public|private | JOIN:code] [player key],
  * MODE n (host: n players per team), READY, UNREADY, TEAM n, PING x, RTT ms, CHAT text,
  * BEGIN (host starts the countdown), LOOK hat colour, AGAIN (back to the lobby after a match), BYE
  */
@@ -97,12 +97,16 @@ public class ClientHandler implements Runnable, Conn {
             }
             int team = parseInt(a[0], -1);
             String name = Protocol.cleanName(a.length > 1 ? a[1] : "");
+            String key = Db.ON && a.length > 8 && Db.validKey(a[8]) ? Db.hash(a[8]) : null;   // 9th field: the player's secret key
+            int level = key != null ? Db.join(key, name)   // online: the level comes from the database, not from the client
+                    : a.length > 4 ? parseInt(a[4], 1) : 1;
             RoomManager.Joined j = rooms.join(a.length > 7 ? a[7] : Protocol.QUICK, name, team,
                     a.length > 2 ? parseInt(a[2], 0) : 0, a.length > 3 ? parseInt(a[3], 0) : 0,
-                    a.length > 4 ? parseInt(a[4], 1) : 1, a.length > 5 ? parseInt(a[5], 0) : 0, this);
+                    level, a.length > 5 ? parseInt(a[5], 0) : 0, this);
             if (j.error() != null) { send("ERROR " + j.error()); return false; }
             game = j.room().game;
             player = j.player();
+            player.key = key;
             System.out.println("[tcp] " + name + " connected from " + socket.getRemoteSocketAddress() + " to room " + j.room().code);
             return true;
         }

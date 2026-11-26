@@ -856,6 +856,18 @@ public class ServerLogicTest {
 
     // ------------------------------------------------------------------ runner
 
+    /** Online profile helpers. The tests run without DB_URL, so the database is off and a finished match must not fail. */
+    void onlineProfileKeys() {
+        String key = java.util.UUID.randomUUID().toString();
+        check(Db.validKey(key), "a UUID player key is accepted");
+        check(!Db.validKey("x") && !Db.validKey("a'; DROP TABLE players;--aaaaaaaa") && !Db.validKey(null), "junk keys are refused");
+        String h = Db.hash(key);
+        check(h.length() == 64 && h.equals(Db.hash(key)) && !h.equals(Db.hash(key + "1")), "the stored hash is SHA-256 and stable");
+        check(!h.contains(key), "the key itself is never stored");
+        check(!Db.ON && Db.join(h, "x") == 1, "without DB_URL the database is off and joins get level 1");
+        check(ctf.common.Progress.levelOf(ctf.common.Progress.need(1) + 5)[0] == 2, "server and client share the level curve");
+    }
+
     private static void check(boolean ok, String what) {
         if (ok) { passed++; System.out.println("  PASS  " + what); }
         else { failed++; System.out.println("  FAIL  " + what); }
@@ -910,6 +922,7 @@ public class ServerLogicTest {
         t.run("grenade limits and armory", t::grenadeLimits);
         t.run("grenades in the lobby", t::grenadesInTheLobby);
         t.run("grenade protocol", t::grenadeProtocol);
+        t.run("online profile keys", t::onlineProfileKeys);
         System.out.println("\nPassed: " + passed + " | Failed: " + failed);
         if (failed > 0) System.exit(1);
     }
