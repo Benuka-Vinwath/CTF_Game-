@@ -122,7 +122,7 @@ public class GameWindow extends JFrame implements NetEvents, MenuScreen.Actions,
             NetClient c = new NetClient(this);
             client = c;   // set first: events can arrive as soon as connect() returns
             try {
-                c.connect(host, port, name, profile.favouriteTeam(), hat, color, profile.level(), profile.title(), room);
+                c.connect(host, port, name, profile.favouriteTeam(), hat, color, profile.level(), profile.title(), room, profile.key());
             } catch (IOException ex) {
                 client = null;
                 SwingUtilities.invokeLater(() -> menu.setStatus("Could not reach " + host + ":" + port + ". Check the address and that the host is in the game.", true, false));

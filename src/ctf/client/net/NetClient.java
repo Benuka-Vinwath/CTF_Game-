@@ -77,14 +77,15 @@ public class NetClient implements NetLink {
     public void connect(String host, int port, String name, int team) throws IOException { connect(host, port, name, team, 0, 0, 1, 0); }
 
     public void connect(String host, int port, String name, int team, int hat, int color, int level, int title) throws IOException {
-        connect(host, port, name, team, hat, color, level, title, Protocol.QUICK);
+        connect(host, port, name, team, hat, color, level, title, Protocol.QUICK, null);
     }
 
     /**
      * hat / color: the look picked in the main menu; level / title: from the profile. All sent with HELLO.
      * room: which room to enter (Protocol.QUICK, Protocol.create(...), Protocol.join(code)).
+     * key: this install's secret player key; the online server saves the profile under it (null = not saved).
      */
-    public void connect(String host, int port, String name, int team, int hat, int color, int level, int title, String room) throws IOException {
+    public void connect(String host, int port, String name, int team, int hat, int color, int level, int title, String room, String key) throws IOException {
         tcp = new Socket();
         tcp.connect(new InetSocketAddress(host, port), 3000);
         tcp.setTcpNoDelay(true);
@@ -97,7 +98,8 @@ public class NetClient implements NetLink {
         reader.setDaemon(true);
         reader.start();
 
-        sendTcp("HELLO " + team + " " + Protocol.cleanName(name) + " " + hat + " " + color + " " + level + " " + title + " " + Protocol.VERSION + " " + room);
+        sendTcp("HELLO " + team + " " + Protocol.cleanName(name) + " " + hat + " " + color + " " + level + " " + title + " " + Protocol.VERSION + " " + room
+                + (key != null ? " " + key : ""));
         scheduler.scheduleAtFixedRate(() -> sendTcp("PING " + System.nanoTime()),
                 2, 2, TimeUnit.SECONDS);
     }

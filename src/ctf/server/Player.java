@@ -36,6 +36,7 @@ public class Player {
     public int level = 1, title;       // from the player's profile, shown on name tags
     public int targetHits;             // practice-target hits in the current lobby
     Bot bot;                           // null for a human; a bot decides its own input every tick
+    volatile String key;               // hashed player key for the online profile (Db); null for bots and players without one
 
     public Player(int id, String name, int team, int token, Conn conn) {
         this.id = id;

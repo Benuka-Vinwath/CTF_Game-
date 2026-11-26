@@ -16,3 +16,6 @@ build/
 dist/
 release/
 *.zip
+# Secrets (database password etc.) never go in git
+.env
+*.env

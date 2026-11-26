@@ -19,9 +19,11 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Compile failed"; exit 1 }
 
 $target = "$User@$Ip"
 Write-Host "== Uploading to $target"
-ssh -i $Key -o StrictHostKeyChecking=accept-new $target "mkdir -p ~/thronefall"
+ssh -i $Key -o StrictHostKeyChecking=accept-new $target "mkdir -p ~/thronefall/lib"
 if ($LASTEXITCODE -ne 0) { Write-Host "Could not reach the server over SSH. Check the IP, the key and that the instance is running."; exit 1 }
 scp -i $Key -r -q out deploy\thronefall.service deploy\setup-server.sh "${target}:~/thronefall/"
+if ($LASTEXITCODE -ne 0) { Write-Host "Upload failed"; exit 1 }
+scp -i $Key -q (Get-ChildItem lib -Filter postgresql-*.jar).FullName "${target}:~/thronefall/lib/"   # the online-profile database driver
 if ($LASTEXITCODE -ne 0) { Write-Host "Upload failed"; exit 1 }
 
 Write-Host "== Setting up and starting the server"
